@@ -7,6 +7,8 @@
 #include <ldns/ldns.h>
 #include <time.h>
 #include <stdarg.h>
+#include <sys/socket.h>
+#include <netdb.h>
 
 #define LISTEN_PORT 53
 #define FORWARD_DNS "127.0.0.11"
@@ -18,6 +20,9 @@ static int debug = 0;
 static int record = 1;
 
 volatile sig_atomic_t stop = 0;
+char container_name[256] = {0}; // 存储CONTAINER_NAME环境变量值
+char gateway_name[256] = {0};  // 存储GATEWAY环境变量值
+struct in_addr gateway_addr;   // 存储网关IP地址
 
 int get_env_switch(const char *var, int default_val) {
     char *switch_env = getenv(var);
@@ -50,7 +55,20 @@ void write_log(const char *format, ...) {
 
 void debug_log(const char *format, ...) {
     if (!debug) return;
-    write_log(format);
+    
+    time_t now;
+    time(&now);
+    char *timestr = ctime(&now);
+    timestr[strlen(timestr)-1] = '\0';
+    
+    printf("[%s] ", timestr);
+    
+    va_list args;
+    va_start(args, format);
+    vprintf(format, args);
+    va_end(args);
+    printf("\n");
+    fflush(stdout);
 }
 
 void handle_sigterm(int sig) {
@@ -89,6 +107,182 @@ void strip_docker_suffix(char *name) {
     }
 }
 
+// 检查是否是网关域名
+int is_gateway_domain(const char *name) {
+    if (!name || !gateway_name[0]) return 0;
+    
+    size_t len = strlen(name);
+    char *temp_name = strdup(name);
+    if (!temp_name) return 0;
+    
+    // 处理以点结尾的FQDN
+    if (len > 0 && temp_name[len-1] == '.') {
+        temp_name[len-1] = '\0';
+        len--;
+    }
+    
+    // 构建预期的网关域名格式：gateway.docker
+    char expected_gateway[512];
+    snprintf(expected_gateway, sizeof(expected_gateway), "%s.docker", gateway_name);
+    
+    int result = (strcasecmp(temp_name, expected_gateway) == 0);
+    debug_log("Checking if '%s' matches gateway domain '%s': %s", 
+              name, expected_gateway, result ? "YES" : "NO");
+    
+    free(temp_name);
+    return result;
+}
+
+// 获取网关IP地址
+int resolve_gateway_ip() {
+    debug_log("Resolving gateway IP from /proc/net/route");
+    
+    FILE *f = fopen("/proc/net/route", "r");
+    if (!f) {
+        perror("fopen /proc/net/route");
+        return 1;
+    }
+
+    char iface[64];
+    unsigned long dest, gateway, mask;
+    unsigned int flags;
+    int refcnt, use, metric, mtu, window, irtt;
+    char line[256];
+
+    // 跳过表头
+    if (!fgets(line, sizeof(line), f)) {
+        debug_log("Failed to read header from /proc/net/route");
+        fclose(f);
+        return 1;
+    }
+
+    // 读取每一行
+    while (fscanf(f, "%63s %lx %lx %X %d %d %d %lx %d %d %d\n",
+                  iface, &dest, &gateway, &flags,
+                  &refcnt, &use, &metric, &mask, &mtu, &window, &irtt) == 11) {
+        
+        if (dest == 0) { // 默认路由
+            if (gateway == 0) {
+                debug_log("Found default route with gateway 0, skipping");
+                continue;
+            }
+            
+            struct in_addr gw;
+            gw.s_addr = gateway;
+            gateway_addr.s_addr = gateway;
+            debug_log("Found default gateway via interface %s: %s", 
+                     iface, inet_ntoa(gw));
+            fclose(f);
+            return 0;
+        }
+    }
+
+    debug_log("No valid default gateway found");
+    fclose(f);
+    return 1;
+}
+
+// 创建网关域名的DNS响应
+ldns_pkt* create_gateway_response(ldns_pkt *query_pkt, ldns_rr *qrr) {
+    if (!query_pkt || !qrr) {
+        debug_log("Invalid parameters for create_gateway_response");
+        return NULL;
+    }
+    
+    debug_log("Creating gateway response for query type %s", 
+              ldns_rr_type2str(ldns_rr_get_type(qrr)));
+    
+    char *qname_str = ldns_rdf2str(ldns_rr_owner(qrr));
+    if (!qname_str) {
+        debug_log("Failed to get query name string");
+        return NULL;
+    }
+    qname_str[strcspn(qname_str, "\n")] = 0;
+
+    ldns_pkt *resp_pkt = ldns_pkt_new();
+    if (!resp_pkt) {
+        debug_log("Failed to create response packet");
+        return NULL;
+    }
+    
+    ldns_pkt_set_id(resp_pkt, ldns_pkt_id(query_pkt));
+    ldns_pkt_set_qr(resp_pkt, 1);
+    ldns_pkt_set_aa(resp_pkt, 1);
+    ldns_pkt_set_rd(resp_pkt, ldns_pkt_rd(query_pkt)); // 保持原始RD标志
+    ldns_pkt_set_ra(resp_pkt, 1);      // 递归可用
+    ldns_pkt_set_rcode(resp_pkt, LDNS_RCODE_NOERROR);
+    ldns_pkt_push_rr(resp_pkt, LDNS_SECTION_QUESTION, ldns_rr_clone(qrr));
+
+    // 只有A记录查询才添加答案
+    if (ldns_rr_get_type(qrr) == LDNS_RR_TYPE_A) {
+        // 确保网关地址有效
+        if (gateway_addr.s_addr == 0) {
+            debug_log("WARNING: Gateway address is 0, resolving again");
+            if (resolve_gateway_ip() != 0) {
+                debug_log("Failed to resolve gateway IP, returning SERVFAIL");
+                ldns_pkt_set_rcode(resp_pkt, LDNS_RCODE_SERVFAIL);
+                free(qname_str);
+                return resp_pkt;
+            }
+        }
+        
+        // 使用 ldns_rr_new_frm_str 创建A记录
+        char rr_str[512];
+        snprintf(rr_str, sizeof(rr_str), "%s 60 IN A %s", 
+                qname_str, inet_ntoa(gateway_addr));
+        
+        debug_log("Creating A record: %s", rr_str);
+        
+        ldns_rr *answer_rr = NULL;
+        ldns_status status = ldns_rr_new_frm_str(&answer_rr, rr_str, 0, NULL, NULL);
+
+        if (status == LDNS_STATUS_OK && answer_rr) {
+            // 添加到答案段
+            ldns_pkt_push_rr(resp_pkt, LDNS_SECTION_ANSWER, answer_rr);
+
+            if (record || debug) {
+                write_log("Gateway A query '%s' -> %s", qname_str, inet_ntoa(gateway_addr));
+            }
+            debug_log("Successfully created gateway A record response");
+        } else {
+            debug_log("Failed to create A record from string: %s", 
+                     ldns_get_errorstr_by_id(status));
+            ldns_pkt_set_rcode(resp_pkt, LDNS_RCODE_SERVFAIL);
+        }
+    } else {
+        debug_log("Unsupported query type for gateway: %s", 
+                 ldns_rr_type2str(ldns_rr_get_type(qrr)));
+    }
+
+    free(qname_str);
+    return resp_pkt;
+}
+
+// 创建一个新的resolver用于单次查询，避免状态污染
+ldns_resolver* create_fresh_resolver() {
+    ldns_resolver *fresh_resolver = ldns_resolver_new();
+    if (!fresh_resolver) {
+        debug_log("Failed to create fresh resolver");
+        return NULL;
+    }
+
+    ldns_rdf *ns_rdf = ldns_rdf_new_frm_str(LDNS_RDF_TYPE_A, FORWARD_DNS);
+    if (!ns_rdf) {
+        debug_log("Failed to create nameserver RDF for fresh resolver");
+        ldns_resolver_deep_free(fresh_resolver);
+        return NULL;
+    }
+    
+    ldns_resolver_push_nameserver(fresh_resolver, ns_rdf);
+    ldns_rdf_deep_free(ns_rdf);
+
+    struct timeval tv = {2, 0};
+    ldns_resolver_set_timeout(fresh_resolver, tv);
+    ldns_resolver_set_retry(fresh_resolver, 1);
+    
+    return fresh_resolver;
+}
+
 int test_forward_dns() {
     debug_log("Testing connection to forward DNS server %s", FORWARD_DNS);
     
@@ -113,7 +307,7 @@ int test_forward_dns() {
     ldns_resolver_set_retry(test_resolver, 1);
 
     ldns_rdf *test_name = NULL;
-    ldns_str2rdf_dname(&test_name, "google.com");
+    ldns_str2rdf_dname(&test_name, container_name);
     
     if (test_name) {
         ldns_pkt *test_resp = ldns_resolver_query(test_resolver, test_name, 
@@ -146,6 +340,27 @@ int main() {
     }
     record = get_env_switch("RECORD", 1);
 
+    // 读取GATEWAY环境变量
+    const char *gateway_env = getenv("GATEWAY");
+    if (gateway_env) {
+        strncpy(gateway_name, gateway_env, sizeof(gateway_name) - 1);
+        debug_log("Gateway name from environment: '%s'", gateway_name);
+    } else {
+        strncpy(gateway_name, "gateway", sizeof(gateway_name) - 1);
+        gateway_name[sizeof(gateway_name) - 1] = '\0';
+        debug_log("No GATEWAY environment variable set, using default: '%s'", gateway_name);
+    }
+    // 读取CONTAINER_NAME环境变量
+    const char *container_env = getenv("CONTAINER_NAME");
+    if (container_env) {
+        strncpy(container_name, container_env, sizeof(container_name) - 1);
+        debug_log("Container name from environment: '%s'", container_name);
+    } else {
+        strncpy(container_name, "docker-dns", sizeof(container_name) - 1);
+        container_name[sizeof(container_name) - 1] = '\0';
+        debug_log("No CONTAINER_NAME environment variable set, using default: '%s'", container_name);
+    }
+
     if (!test_forward_dns()) {
         debug_log("WARNING: Forward DNS server may not be available");
     }
@@ -154,6 +369,14 @@ int main() {
     struct sockaddr_in addr, client;
     socklen_t client_len = sizeof(client);
     uint8_t buf[BUF_SIZE];
+
+    // 初始化网关IP地址
+    gateway_addr.s_addr = 0;
+    if (resolve_gateway_ip() != 0) {
+        debug_log("WARNING: Failed to resolve gateway IP at startup");
+    } else {
+        debug_log("Gateway IP resolved to: %s", inet_ntoa(gateway_addr));
+    }
 
     sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd < 0) { 
@@ -185,28 +408,9 @@ int main() {
         return 1;
     }
 
-    ldns_resolver *resolver = ldns_resolver_new();
-    if (!resolver) { 
-        debug_log("Failed to create resolver"); 
-        close(sockfd);
-        return 1; 
+    if (gateway_name[0]) {
+        debug_log("Special handling for %s.docker -> %s", gateway_name, inet_ntoa(gateway_addr));
     }
-
-    ldns_rdf *ns_rdf = ldns_rdf_new_frm_str(LDNS_RDF_TYPE_A, FORWARD_DNS);
-    if (!ns_rdf) {
-        debug_log("Failed to create nameserver RDF");
-        ldns_resolver_deep_free(resolver);
-        close(sockfd);
-        return 1;
-    }
-    
-    ldns_resolver_push_nameserver(resolver, ns_rdf);
-    ldns_rdf_deep_free(ns_rdf);
-
-    tv.tv_sec = 2; 
-    tv.tv_usec = 0;
-    ldns_resolver_set_timeout(resolver, tv);
-    ldns_resolver_set_retry(resolver, 1);
 
     debug_log("DNS forwarder listening on port %d, forwarding *.docker to %s", 
               LISTEN_PORT, FORWARD_DNS);
@@ -253,106 +457,128 @@ int main() {
             continue;
         }
 
+        // 移除换行符
         qname_str[strcspn(qname_str, "\n")] = 0;
         debug_log("Query for: '%s', Type: %s, ID: %d", qname_str, 
                   ldns_rr_type2str(ldns_rr_get_type(qrr)), ldns_pkt_id(query_pkt));
 
         ldns_pkt *resp_pkt = NULL;
 
-        if (is_docker_domain(qname_str)) {
-            char *modified_name = strdup(qname_str);
-            if (modified_name) {
-                strip_docker_suffix(modified_name);
-                if (record) {
-                    write_log("Forwarding query for '%s' to %s", modified_name, FORWARD_DNS);
-                } else {
-                    debug_log("Forwarding query for '%s' to %s", modified_name, FORWARD_DNS);
-                }
+        // 首先检查是否是docker域名
+        if (!is_docker_domain(qname_str)) {
+           debug_log("Not a .docker domain, returning REFUSED");
+        } 
+        else {
+            // 然后检查是否是网关域名
+            if (gateway_name[0] && is_gateway_domain(qname_str)) {
+                debug_log("Handling gateway domain: %s", qname_str);
+                resp_pkt = create_gateway_response(query_pkt, qrr);
+            }
+            // 其他docker域名
+            else {
+                char *modified_name = strdup(qname_str);
+                if (modified_name) {
+                    strip_docker_suffix(modified_name);
+                    if (record || debug) {
+                        write_log("Forwarding %s query for '%s' to %s", ldns_rr_type2str(ldns_rr_get_type(qrr)), modified_name, FORWARD_DNS);
+                    }
 
-                ldns_rdf *rdf_name = NULL;
-                if (ldns_str2rdf_dname(&rdf_name, modified_name) == LDNS_STATUS_OK && rdf_name) {
-                    ldns_pkt *forward_resp = ldns_resolver_query(resolver, rdf_name, 
-                                                 ldns_rr_get_type(qrr), LDNS_RR_CLASS_IN, LDNS_RD);
-                    
-                    if (forward_resp) {
-                        uint8_t rcode = ldns_pkt_get_rcode(forward_resp);
-                        const char* rcode_str = "UNKNOWN";
-                        switch(rcode) {
-                            case LDNS_RCODE_NOERROR: rcode_str = "NOERROR"; break;
-                            case LDNS_RCODE_FORMERR: rcode_str = "FORMERR"; break;
-                            case LDNS_RCODE_SERVFAIL: rcode_str = "SERVFAIL"; break;
-                            case LDNS_RCODE_NXDOMAIN: rcode_str = "NXDOMAIN"; break;
-                            case LDNS_RCODE_NOTIMPL: rcode_str = "NOTIMPL"; break;
-                            case LDNS_RCODE_REFUSED: rcode_str = "REFUSED"; break;
+                    ldns_rdf *rdf_name = NULL;
+                    if (ldns_str2rdf_dname(&rdf_name, modified_name) == LDNS_STATUS_OK && rdf_name) {
+                        // 为每个查询创建新的resolver，避免状态污染
+                        ldns_resolver *fresh_resolver = create_fresh_resolver();
+                        if (!fresh_resolver) {
+                            debug_log("Failed to create fresh resolver for query");
+                            ldns_rdf_deep_free(rdf_name);
+                            free(modified_name);
+                            free(qname_str);
+                            ldns_pkt_free(query_pkt);
+                            continue;
                         }
-                        debug_log("Forward DNS response: %s (%d answers)", 
-                                  rcode_str,
-                                  ldns_rr_list_rr_count(ldns_pkt_answer(forward_resp)));
                         
-                        // 创建新的响应包，保持原始Question Section
-                        resp_pkt = ldns_pkt_new();
-                        if (resp_pkt) {
-                            // 复制基本属性
-                            ldns_pkt_set_id(resp_pkt, ldns_pkt_id(query_pkt));
-                            ldns_pkt_set_qr(resp_pkt, 1);
-                            ldns_pkt_set_aa(resp_pkt, ldns_pkt_aa(forward_resp));
-                            ldns_pkt_set_tc(resp_pkt, ldns_pkt_tc(forward_resp));
-                            ldns_pkt_set_rd(resp_pkt, ldns_pkt_rd(forward_resp));
-                            ldns_pkt_set_ra(resp_pkt, ldns_pkt_ra(forward_resp));
-                            ldns_pkt_set_rcode(resp_pkt, ldns_pkt_get_rcode(forward_resp));
+                        ldns_pkt *forward_resp = ldns_resolver_query(fresh_resolver, rdf_name, 
+                                                    ldns_rr_get_type(qrr), LDNS_RR_CLASS_IN, LDNS_RD);
+                        
+                        if (forward_resp) {
+                            uint8_t rcode = ldns_pkt_get_rcode(forward_resp);
+                            const char* rcode_str = "UNKNOWN";
+                            switch(rcode) {
+                                case LDNS_RCODE_NOERROR: rcode_str = "NOERROR"; break;
+                                case LDNS_RCODE_FORMERR: rcode_str = "FORMERR"; break;
+                                case LDNS_RCODE_SERVFAIL: rcode_str = "SERVFAIL"; break;
+                                case LDNS_RCODE_NXDOMAIN: rcode_str = "NXDOMAIN"; break;
+                                case LDNS_RCODE_NOTIMPL: rcode_str = "NOTIMPL"; break;
+                                case LDNS_RCODE_REFUSED: rcode_str = "REFUSED"; break;
+                            }
+                            debug_log("Forward DNS response: %s (%d answers)", 
+                                    rcode_str,
+                                    ldns_rr_list_rr_count(ldns_pkt_answer(forward_resp)));
                             
-                            // 使用原始查询的Question Section
-                            ldns_pkt_push_rr(resp_pkt, LDNS_SECTION_QUESTION, ldns_rr_clone(qrr));
-                            
-                            // 复制Answer Section中的记录，但需要修改域名
-                            ldns_rr_list *answers = ldns_pkt_answer(forward_resp);
-                            if (answers) {
-                                for (size_t i = 0; i < ldns_rr_list_rr_count(answers); i++) {
-                                    ldns_rr *answer_rr = ldns_rr_clone(ldns_rr_list_rr(answers, i));
-                                    if (answer_rr) {
-                                        // 将答案记录的域名改回原始域名
-                                        ldns_rr_set_owner(answer_rr, ldns_rdf_clone(qname));
-                                        ldns_pkt_push_rr(resp_pkt, LDNS_SECTION_ANSWER, answer_rr);
+                            // 创建新的响应包，保持原始Question Section
+                            resp_pkt = ldns_pkt_new();
+                            if (resp_pkt) {
+                                // 复制基本属性
+                                ldns_pkt_set_id(resp_pkt, ldns_pkt_id(query_pkt));
+                                ldns_pkt_set_qr(resp_pkt, 1);
+                                ldns_pkt_set_aa(resp_pkt, ldns_pkt_aa(forward_resp));
+                                ldns_pkt_set_tc(resp_pkt, ldns_pkt_tc(forward_resp));
+                                ldns_pkt_set_rd(resp_pkt, ldns_pkt_rd(forward_resp));
+                                ldns_pkt_set_ra(resp_pkt, ldns_pkt_ra(forward_resp));
+                                ldns_pkt_set_rcode(resp_pkt, ldns_pkt_get_rcode(forward_resp));
+                                
+                                // 使用原始查询的Question Section
+                                ldns_pkt_push_rr(resp_pkt, LDNS_SECTION_QUESTION, ldns_rr_clone(qrr));
+                                
+                                // 复制Answer Section中的记录，但需要修改域名
+                                ldns_rr_list *answers = ldns_pkt_answer(forward_resp);
+                                if (answers) {
+                                    for (size_t i = 0; i < ldns_rr_list_rr_count(answers); i++) {
+                                        ldns_rr *answer_rr = ldns_rr_clone(ldns_rr_list_rr(answers, i));
+                                        if (answer_rr) {
+                                            // 将答案记录的域名改回原始域名
+                                            ldns_rr_set_owner(answer_rr, ldns_rdf_clone(qname));
+                                            ldns_pkt_push_rr(resp_pkt, LDNS_SECTION_ANSWER, answer_rr);
+                                        }
                                     }
                                 }
-                            }
-                            
-                            // 复制Authority Section
-                            ldns_rr_list *authority = ldns_pkt_authority(forward_resp);
-                            if (authority) {
-                                for (size_t i = 0; i < ldns_rr_list_rr_count(authority); i++) {
-                                    ldns_pkt_push_rr(resp_pkt, LDNS_SECTION_AUTHORITY, 
-                                                    ldns_rr_clone(ldns_rr_list_rr(authority, i)));
+                                
+                                // 复制Authority Section
+                                ldns_rr_list *authority = ldns_pkt_authority(forward_resp);
+                                if (authority) {
+                                    for (size_t i = 0; i < ldns_rr_list_rr_count(authority); i++) {
+                                        ldns_pkt_push_rr(resp_pkt, LDNS_SECTION_AUTHORITY, 
+                                                        ldns_rr_clone(ldns_rr_list_rr(authority, i)));
+                                    }
                                 }
-                            }
-                            
-                            // 复制Additional Section
-                            ldns_rr_list *additional = ldns_pkt_additional(forward_resp);
-                            if (additional) {
-                                for (size_t i = 0; i < ldns_rr_list_rr_count(additional); i++) {
-                                    ldns_pkt_push_rr(resp_pkt, LDNS_SECTION_ADDITIONAL, 
-                                                    ldns_rr_clone(ldns_rr_list_rr(additional, i)));
+                                
+                                // 复制Additional Section
+                                ldns_rr_list *additional = ldns_pkt_additional(forward_resp);
+                                if (additional) {
+                                    for (size_t i = 0; i < ldns_rr_list_rr_count(additional); i++) {
+                                        ldns_pkt_push_rr(resp_pkt, LDNS_SECTION_ADDITIONAL, 
+                                                        ldns_rr_clone(ldns_rr_list_rr(additional, i)));
+                                    }
                                 }
+                                
+                                debug_log("Created response with original question section");
                             }
                             
-                            debug_log("Created response with original question section");
+                            ldns_pkt_free(forward_resp);
+                        } else {
+                            debug_log("No response from forward DNS server for '%s' (this is expected for non-existent containers)", modified_name);
                         }
                         
-                        ldns_pkt_free(forward_resp);
+                        // 释放为此查询创建的resolver
+                        ldns_resolver_deep_free(fresh_resolver);
+                        ldns_rdf_deep_free(rdf_name);
                     } else {
-                        debug_log("No response from forward DNS server");
+                        debug_log("Failed to create RDF name for '%s'", modified_name);
                     }
-                    
-                    ldns_rdf_deep_free(rdf_name);
-                } else {
-                    debug_log("Failed to create RDF name for '%s'", modified_name);
+                    free(modified_name);
                 }
-                free(modified_name);
             }
-        } else {
-            debug_log("Not a .docker domain, returning REFUSED");
         }
-
+        
         if (!resp_pkt) {
             debug_log("Creating REFUSED response");
             resp_pkt = ldns_pkt_new();
@@ -386,7 +612,6 @@ int main() {
     }
 
     write_log("Shutting down gracefully");
-    ldns_resolver_deep_free(resolver);
     close(sockfd);
     return 0;
 }

@@ -56,6 +56,9 @@ start_container() {
     name="$1"
     echo "启动容器 $name..."
     docker run -d \
+        -e "DEBUG=false" \
+        -e "GATEWAY=gateway" \
+        -e "CONTAINER_NAME=$CONTAINER_NAME" \
         --network "$DOCKER_NET" \
         --name "$name" \
         -p 53:53/udp \
