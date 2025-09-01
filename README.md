@@ -1,10 +1,13 @@
 # Docker 专用 DNS 转发器：让宿主机解析 .docker 域名
 
+该 Docker DNS 转发器目的是实现在宿主机使用容器名访问容器的服务，无需映射端口，无需修改hosts文件。
+
 在 Docker 环境中，默认情况下容器间可通过容器名通信（依赖 Docker 内置 DNS 服务器 `127.0.0.11`），但宿主机无法直接解析容器名。
+
 于是我编写了这个小工具 **Docker DNS 转发器**，用于解决这一问题——让宿主机可以通过 `容器名.docker` 域名访问容器，同时不影响其他公共域名解析。
 
 **注意：**
-Docker 的默认 bridge 网络（即 docker0 网桥）是一个特殊的网络，它不支持容器间通过容器名直接通信，仅支持通过 IP 地址访问。这与用户自定义的 bridge 网络（docker network create 创建）不同，故而该转发器要配合自定义网络使用。
+Docker 的默认 bridge 网络（即 docker0 网桥）是一个特殊的网络，它不支持容器间通过容器名直接通信，仅支持通过 IP 地址访问。这与用户自定义的 bridge 网络（docker network create 创建）不同，故而该转发器要配合自定义网络使用，有关自定义网络可参考Docker官方说明。
 
 ## 一、核心功能
 
@@ -12,6 +15,8 @@ Docker 的默认 bridge 网络（即 docker0 网桥）是一个特殊的网络�
 
 1. **拦截 `.docker` 域名**：若查询域名以 `.docker` 结尾（如 `docker-dns.docker`），去除 `.docker` 后缀后转发至 Docker 内置 DNS（`127.0.0.11`），获取容器真实 IP；
 2. **拒绝非 `.docker` 域名**：对其他域名（如 `github.com`、`baidu.com`）返回 `REFUSED` 响应，引导宿主机自动使用后续公共 DNS 解析，不影响正常上网。
+
+**注意：** 对于 `.docker` 后缀，大小写不敏感。
 
 ## 二、适用场景
 
@@ -39,7 +44,13 @@ graph TD
 
 ## 四、部署步骤
 
-### 1. 构建Docker-DNS
+### 1. 自动构建/部署
+
+下载此仓库的 `docker_dns.sh` 脚本，执行该脚本根据引导完成部署。
+
+### 2. 手动构建/部署
+
+#### 1. 构建Docker-DNS
 
 ```bash
 
@@ -62,7 +73,7 @@ docker run -d \
 
 ```
 
-### 2. 配置宿主机 DNS 优先级
+#### 2. 配置宿主机 DNS 优先级
 
 1. 编辑 `/etc/resolv.conf`，将 `127.0.0.1` 设为第一优先 DNS：
 
