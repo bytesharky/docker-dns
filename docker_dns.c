@@ -11,13 +11,28 @@
 #define LISTEN_PORT 53
 #define FORWARD_DNS "127.0.0.11"
 #define BUF_SIZE 4096
-#define DEBUG 1
+
+// 默认关闭调试模式
+static int debug = 0; 
+// 默认开启已解析日志
+static int record = 1;
 
 volatile sig_atomic_t stop = 0;
 
-void debug_log(const char *format, ...) {
-    if (!DEBUG) return;
-    
+int get_env_switch(const char *var, int default_val) {
+    char *switch_env = getenv(var);
+    if (switch_env != NULL) {
+        if (strcmp(switch_env, "1") == 0 || 
+            strcasecmp(switch_env, "enabled") == 0 || 
+            strcasecmp(switch_env, "true") == 0 || 
+            strcasecmp(switch_env, "yes") == 0) {
+            return 1;
+        }
+    }
+    return default_val;
+}
+
+void write_log(const char *format, ...) {
     time_t now;
     time(&now);
     char *timestr = ctime(&now);
@@ -31,6 +46,11 @@ void debug_log(const char *format, ...) {
     va_end(args);
     printf("\n");
     fflush(stdout);
+}
+
+void debug_log(const char *format, ...) {
+    if (!debug) return;
+    write_log(format);
 }
 
 void handle_sigterm(int sig) {
@@ -118,7 +138,13 @@ int main() {
     signal(SIGTERM, handle_sigterm);
     signal(SIGINT, handle_sigterm);
 
-    debug_log("Starting Docker DNS forwarder");
+    write_log("Starting Docker DNS forwarder");
+
+    debug = get_env_switch("DEBUG", 0);
+    if (debug) {
+        debug_log("Debug mode Enabled");
+    }
+    record = get_env_switch("RECORD", 1);
 
     if (!test_forward_dns()) {
         debug_log("WARNING: Forward DNS server may not be available");
@@ -237,7 +263,11 @@ int main() {
             char *modified_name = strdup(qname_str);
             if (modified_name) {
                 strip_docker_suffix(modified_name);
-                debug_log("Forwarding query for '%s' to %s", modified_name, FORWARD_DNS);
+                if (record) {
+                    write_log("Forwarding query for '%s' to %s", modified_name, FORWARD_DNS);
+                } else {
+                    debug_log("Forwarding query for '%s' to %s", modified_name, FORWARD_DNS);
+                }
 
                 ldns_rdf *rdf_name = NULL;
                 if (ldns_str2rdf_dname(&rdf_name, modified_name) == LDNS_STATUS_OK && rdf_name) {
@@ -355,7 +385,7 @@ int main() {
         ldns_pkt_free(query_pkt);
     }
 
-    debug_log("Shutting down gracefully");
+    write_log("Shutting down gracefully");
     ldns_resolver_deep_free(resolver);
     close(sockfd);
     return 0;
