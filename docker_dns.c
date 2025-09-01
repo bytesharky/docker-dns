@@ -47,7 +47,7 @@ int is_docker_domain(const char *name) {
         len--;
     }
     
-    int result = (len >= 7 && strncmp(name + len - 7, ".docker", 7) == 0);
+    int result = (len >= 7 && strncasecmp(name + len - 7, ".docker", 7) == 0);
     debug_log("Checking if '%s' is docker domain: %s", name, result ? "YES" : "NO");
     return result;
 }
