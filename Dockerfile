@@ -21,7 +21,7 @@ RUN gcc docker_dns.c -o docker_dns -lldns
 FROM alpine:3.22
 
 # 安装 ldns
-RUN apk add --no-cache ldns-dev \
+RUN apk add --no-cache ldns \
     && rm -rf /var/cache/apk/*
 
 # 拷贝二进制到运行镜像

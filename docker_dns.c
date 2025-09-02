@@ -375,7 +375,7 @@ int main() {
     if (resolve_gateway_ip() != 0) {
         debug_log("WARNING: Failed to resolve gateway IP at startup");
     } else {
-        debug_log("Gateway IP resolved to: %s", inet_ntoa(gateway_addr));
+        write_log("Gateway IP resolved to: %s", inet_ntoa(gateway_addr));
     }
 
     sockfd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -412,7 +412,7 @@ int main() {
         debug_log("Special handling for %s.docker -> %s", gateway_name, inet_ntoa(gateway_addr));
     }
 
-    debug_log("DNS forwarder listening on port %d, forwarding *.docker to %s", 
+    write_log("DNS forwarder listening on port %d, forwarding *.docker to %s", 
               LISTEN_PORT, FORWARD_DNS);
 
     while (!stop) {
