@@ -7,6 +7,79 @@ DEFAULT_NETWORK_ADDRESS="172.18.0.0/24"
 DEFAULT_RESOLV="/etc/resolv.conf"
 DEFAULT_CONTAINER_NAME="docker-dns"
 DEFAULT_IMAGE_NAME="docker-dns:alpine"
+DEFAULT_TZ="Asia/Shanghai"
+MUSL_TZ=""
+
+# ========================
+# 启动容器函数
+# ========================
+start_container() {
+    name="$1"
+    echo "启动容器 $name..."
+    docker run -d \
+        -e "TZ=$MUSL_TZ" \
+        -e "DEBUG=false" \
+        -e "GATEWAY=gateway" \
+        -e "CONTAINER_NAME=$CONTAINER_NAME" \
+        --network "$DOCKER_NET" \
+        --name "$name" \
+        -p 53:53/udp \
+        --restart unless-stopped \
+        "$IMAGE_NAME"
+}
+
+# ========================
+# 获取宿主机时区名称
+# ========================
+get_system_timezone() {
+    if command -v timedatectl >/dev/null 2>&1; then
+        timedatectl show -p Timezone --value
+    elif [ -f /etc/timezone ]; then
+        cat /etc/timezone
+    elif [ -L /etc/localtime ]; then
+        readlink /etc/localtime | sed 's|/usr/share/zoneinfo/||'
+    else
+        echo $DEFAULT_TZ
+    fi
+}
+
+# ========================
+# 转换为 musl 可识别的 TZ
+# ========================
+to_musl_tz() {
+    TZ_NAME="$1"
+
+    if echo "$TZ_NAME" | grep -Eq '^[Uu][Tt][Cc][+-][0-9]{1,2}(:[0-9]{1,2})?$'; then
+        # 解析 UTC±N 或 UTC±N:MM
+        SIGN=$(echo "$TZ_NAME" | grep -oE '[+-]' | head -n1)
+        HOUR=$(echo "$TZ_NAME" | grep -oE '[0-9]{1,2}' | head -n1)
+        MIN=$(echo "$TZ_NAME" | grep -oE ':[0-9]{1,2}' | cut -c2-)
+    else
+        # tzdata 名称
+        OFFSET=$(TZ="$TZ_NAME" date +%z)
+        if [ "$OFFSET" = "+0000" ] && [ "$TZ_NAME" != "UTC" ]; then
+            echo "警告: 无法识别时区 $TZ_NAME，回退到 UTC" >&2
+            SIGN="+"
+            HOUR="00"
+            MIN="00"
+        else
+            SIGN=$(echo "$OFFSET" | cut -c1)
+            HOUR=$(echo "$OFFSET" | cut -c2-3)
+            MIN=$(echo "$OFFSET" | cut -c4-5)
+        fi
+    fi
+    
+    SIGN=$(echo "$SIGN" | tr '+-' '-+')
+    [ -z "$SIGN" ] && SIGN="+"
+    [ -z "$HOUR" ] && HOUR="00"
+    [ -z "$MIN" ] && MIN="00"
+
+    if [ "$HOUR" = "00" ] && [ "$MIN" = "00" ]; then
+        echo "UTC"
+        return
+    fi
+    echo "UTC$SIGN$HOUR:$MIN"
+}
 
 # 提示用户输入并处理默认值
 read -p "请输入Docker网络名称 (默认: $DEFAULT_DOCKER_NET): " DOCKER_NET
@@ -27,6 +100,12 @@ CONTAINER_NAME=${CONTAINER_NAME:-$DEFAULT_CONTAINER_NAME}
 read -p "请输入镜像名称 (默认: $DEFAULT_IMAGE_NAME): " IMAGE_NAME
 IMAGE_NAME=${IMAGE_NAME:-$DEFAULT_IMAGE_NAME}
 
+DEFAULT_TZ=$(get_system_timezone)
+
+read -p "请输入时区名称或UTC±N (默认: $DEFAULT_TZ): " TZ
+TZ=${TZ:-$DEFAULT_TZ}
+MUSL_TZ=$(to_musl_tz "$TZ")
+
 # 显示最终配置
 echo "----------------------------------------"
 echo "已配置的参数："
@@ -36,6 +115,8 @@ echo "网络地址: $NETWORK_ADDRESS"
 echo "resolv路径: $RESOLV"
 echo "容器名称: $CONTAINER_NAME"
 echo "镜像名称: $IMAGE_NAME"
+echo "标准时区: $TZ"
+echo "musl 时区: $MUSL_TZ"
 echo "----------------------------------------"
 
 # 确认继续
@@ -48,23 +129,6 @@ while true; do
         * ) ;;
     esac
 done
-
-# ========================
-# 启动容器函数
-# ========================
-start_container() {
-    name="$1"
-    echo "启动容器 $name..."
-    docker run -d \
-        -e "DEBUG=false" \
-        -e "GATEWAY=gateway" \
-        -e "CONTAINER_NAME=$CONTAINER_NAME" \
-        --network "$DOCKER_NET" \
-        --name "$name" \
-        -p 53:53/udp \
-        --restart unless-stopped \
-        "$IMAGE_NAME"
-}
 
 # ========================
 # 检查 Docker 网络
