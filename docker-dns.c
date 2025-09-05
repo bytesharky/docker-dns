@@ -489,7 +489,7 @@ int main() {
     signal(SIGINT, handle_sigterm);
 
     log_level = get_log_level(LOG_LEVEL, LOG_INFO);
-    log_msg(LOG_INFO, "Starting Docker DNS forwarder (level=%d:%s)", log_level, level_str[log_level]);
+    log_msg(LOG_INFO, "Starting Docker DNS forwarder (log level=%d->%s)", log_level, level_str[log_level]);
 
     // 读取GATEWAY环境变量
     const char *gateway_env = getenv("GATEWAY");

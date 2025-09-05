@@ -34,6 +34,24 @@
   
   Docker会将它转发至宿主机配置的DNS服务器（即该转发器），该转发器先去除 `.docker` 后缀变为合法容器名，再由Docker内置的DNS服务器解析得到IP地址，并返回最终结果。
 
+* **史诗级的大小优化**
+
+  针对镜像体积进行史诗级的优化，从原本 8.73MB 到目前 1.22MB 。
+
+  **原方案：** Alpine3.22(8.31MB) + ldns库(360.0KB) + docker-dns(37.3K)，最终镜像约为8.73MB。
+
+  **新方案：** Scratch(0B) + docker-dns(4.08 MB，upx压缩后1.22MB)，最终镜像约为1.22MB。
+
+  **优化过程：**
+
+  **优化1：** 使用静态编译
+
+  **优化2：** 优化编译，去除符号表
+
+  **优化3：** 使用 UPX 压缩
+
+  **优化4：** 基于 `Scratch` (空白镜像)
+
 ---
 
 ## ⚠️ 注意事项
@@ -76,14 +94,20 @@ graph TD
    # git clone https://gitee.com/bytesharky/docker-dns
 
    cd docker-dns
-   docker build -t docker-dns:alpine .
+   docker build -t docker-dns:static .
 
+   # 启动容器
+   # 挂载时区数据（非必须，用日志显示本地时间）
+   # 设置日志级别（非必须，默认为 INFO）
    docker run -d \
-       --network docker-net \
-       --name docker-dns \
-       -p 53:53/udp \
-       --restart unless-stopped \
-       docker-dns:alpine
+     -e LOG_LEVEL=INFO \
+     -e TZ=/zoneinfo/Asia/Shanghai \
+     -v /usr/share/zoneinfo:/zoneinfo:ro \
+     --network docker-net \
+     --name docker-dns \
+     -p 53:53/udp \
+     --restart always \
+     docker-dns:static
    ```
 
 2. 配置宿主机 DNS
@@ -107,14 +131,22 @@ graph TD
 1. 拉取我构建好的镜像
 
    ```bash
-   docker pull ccr.ccs.tencentyun.com/sharky/docker-dns:alpine
+   docker pull ccr.ccs.tencentyun.com/sharky/docker-dns:static
 
+   docker tag ccr.ccs.tencentyun.com/sharky/docker-dns:static docker-dns:static
+   
+   # 启动容器
+   # 挂载时区数据（非必须，用日志显示本地时间）
+   # 设置日志级别（非必须，默认为 INFO）
    docker run -d \
+     -e LOG_LEVEL=INFO \
+     -e TZ=/zoneinfo/Asia/Shanghai \
+     -v /usr/share/zoneinfo:/zoneinfo:ro \
      --network docker-net \
      --name docker-dns \
      -p 53:53/udp \
-     --restart unless-stopped \
-     ccr.ccs.tencentyun.com/sharky/docker-dns:alpine
+     --restart always \
+     docker-dns:static
    ```
 
 2. 配置宿主机 DNS
