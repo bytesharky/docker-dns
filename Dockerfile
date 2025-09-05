@@ -10,10 +10,12 @@ RUN apk add --no-cache build-base ldns-dev
 WORKDIR /app
 
 # 复制源代码
-COPY docker_dns.c /app/
+COPY docker-dns.c /app/
+COPY logging.c /app/
+COPY logging.h /app/
 
 # 编译
-RUN gcc docker_dns.c -o docker_dns -lldns
+RUN gcc docker-dns.c logging.c -o docker-dns -lldns
 
 # ========================
 # Stage 2: Runtime
@@ -25,7 +27,7 @@ RUN apk add --no-cache ldns \
     && rm -rf /var/cache/apk/*
 
 # 拷贝二进制到运行镜像
-COPY --from=builder /app/docker_dns /app/docker_dns
+COPY --from=builder /app/docker-dns /app/docker-dns
 
 WORKDIR /app
 
@@ -33,4 +35,4 @@ WORKDIR /app
 EXPOSE 53/udp
 
 # 设置容器入口
-CMD ["./docker_dns"]
+CMD ["./docker-dns"]
