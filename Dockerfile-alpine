@@ -35,4 +35,6 @@ WORKDIR /app
 EXPOSE 53/udp
 
 # 设置容器入口
-CMD ["./docker-dns"]
+ENTRYPOINT ["./docker-dns"]
+
+CMD ["-f"]

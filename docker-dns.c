@@ -8,6 +8,7 @@
 #include <time.h>
 #include <stdarg.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <netdb.h>
 #include "logging.h"
 
@@ -25,6 +26,37 @@ struct in_addr gateway_addr;   // 存储网关IP地址
 void handle_sigterm(int sig) {
     log_msg(LOG_DEBUG, "Received signal %d", sig);
     stop = 1;
+}
+
+// 守护进程
+void daemonize() {
+    pid_t pid;
+
+    pid = fork();
+    if (pid < 0) exit(EXIT_FAILURE);
+    if (pid > 0) exit(EXIT_SUCCESS);
+
+    if (setsid() < 0) exit(EXIT_FAILURE);
+
+    pid = fork();
+    if (pid < 0) exit(EXIT_FAILURE);
+    if (pid > 0) exit(EXIT_SUCCESS);
+
+    chdir("/");
+
+    umask(0);
+
+    fclose(stdin);
+    fclose(stdout);
+    fclose(stderr);
+}
+
+// 打印帮助信息
+void print_help(const char *progname) {
+    printf("Usage: %s [OPTIONS]\n", progname);
+    printf("Options:\n");
+    printf("  -f, --foreground   Run in foreground mode (do not daemonize)\n");
+    printf("  -h, --help         Show this help message and exit\n");
 }
 
 // 检查是否是.docker域名
@@ -484,7 +516,26 @@ void process_query(int sockfd, const char *buf, ssize_t len,struct sockaddr_in *
 }
 
 // 主程序入口
-int main() {
+int main(int argc, char *argv[]) {
+
+    int foreground = 0;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "--foreground") == 0) {
+            foreground = 1;
+            break;
+        } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+            print_help(argv[0]);
+            return 0;
+        } else {
+            fprintf(stderr, "Unknown option: %s\n", argv[i]);
+            print_help(argv[0]);
+            return 1;
+        }
+    }
+
+    if (!foreground) daemonize();
+
     signal(SIGTERM, handle_sigterm);
     signal(SIGINT, handle_sigterm);
 
