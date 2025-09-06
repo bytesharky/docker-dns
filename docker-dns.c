@@ -12,15 +12,42 @@
 #include <netdb.h>
 #include "logging.h"
 
+#define BUF_SIZE 4096
+#define LISTEN_PORT_ENV "LISTEN_PORT"
+#define FORWARD_DNS_ENV "FORWARD_DNS"
+#define GATEWAY_ENV "GATEWAY_NAME"
+#define CONTAINER_ENV "CONTAINER_NAME"
+#define SUFFIX_ENV "SUFFIX_DOMAIN"
+#define LOG_LEVEL_ENV "LOG_LEVEL"
+
 #define LISTEN_PORT 53
 #define FORWARD_DNS "127.0.0.11"
-#define BUF_SIZE 4096
-#define LOG_LEVEL "LOG_LEVEL"
+#define GATEWAY_DEFAULT "gateway"
+#define CONTAINER_DEFAULT "docker-dns"
+#define SUFFIX_DEFAULT ".docker"
+#define LOG_LEVEL_DEFAULT LOG_INFO
+
+typedef enum {
+    OPT_UNKNOWN,
+    OPT_LOG_LEVEL,
+    OPT_GATEWAY,
+    OPT_SUFFIX,
+    OPT_CONTAINER,
+    OPT_DNS_SERVER,
+    OPT_PORT,
+    OPT_FOREGROUND,
+    OPT_HELP
+} OptionType;
 
 volatile sig_atomic_t stop = 0;
-char container_name[256] = {0}; // 存储CONTAINER_NAME环境变量值
-char gateway_name[256] = {0};  // 存储GATEWAY环境变量值
-struct in_addr gateway_addr;   // 存储网关IP地址
+int foreground = 0;                     // 前端运行
+int listen_port = LISTEN_PORT;          // 监听端口
+char forward_dns[16] = FORWARD_DNS;     // 转发DNS服务器地址
+char container_name[256] = {0};         // 存储Docker容器名
+char gateway_name[64] = {0};            // 存储网关主机名
+char suffix_domain[64] = {0};           // 存储转发域名后缀
+struct in_addr gateway_addr;            // 存储网关IP地址
+
 
 // 处理终止信号
 void handle_sigterm(int sig) {
@@ -55,23 +82,82 @@ void daemonize() {
 void print_help(const char *progname) {
     printf("Usage: %s [OPTIONS]\n", progname);
     printf("Options:\n");
+    printf("  -L, --log-level    Set log level (DEBUG, default: INFO, WARN, ERROR, FATAL)\n");
+    printf("  -G, --gateway      Set gateway name (default: %s)\n", GATEWAY_DEFAULT);
+    printf("  -S, --suffix       Set suffix name (default: %s)\n", SUFFIX_DEFAULT);
+    printf("  -C, --container    Set container name (default: %s)\n", CONTAINER_DEFAULT);
+    printf("  -D, --dns-server   Set forward DNS server (default: %s)\n", FORWARD_DNS);
+    printf("  -P, --port         Set listening port (default: %d)\n", LISTEN_PORT);
     printf("  -f, --foreground   Run in foreground mode (do not daemonize)\n");
     printf("  -h, --help         Show this help message and exit\n");
 }
 
-// 检查是否是.docker域名
-int is_docker_domain(const char *name) {
+// 处理命令行选项
+OptionType get_option_type(const char* arg) {
+    if (arg == NULL) {
+        return OPT_UNKNOWN;
+    }
+    
+    if (strlen(arg) == 2 && arg[0] == '-') {
+        switch (arg[1]) {
+            case 'L': return OPT_LOG_LEVEL;
+            case 'G': return OPT_GATEWAY;
+            case 'S': return OPT_SUFFIX;
+            case 'C': return OPT_CONTAINER;
+            case 'D': return OPT_DNS_SERVER;
+            case 'P': return OPT_PORT;
+            case 'f': return OPT_FOREGROUND;
+            case 'h': return OPT_HELP;
+            default:  return OPT_UNKNOWN;
+        }
+    }
+    else if (strlen(arg) > 2 && arg[0] == '-' && arg[1] == '-') {
+        const char* opt = arg + 2;
+        if (strcmp(opt, "log-level") == 0)    return OPT_LOG_LEVEL;
+        if (strcmp(opt, "gateway") == 0)      return OPT_GATEWAY;
+        if (strcmp(opt, "container") == 0)    return OPT_CONTAINER;
+        if (strcmp(opt, "dns-server") == 0)   return OPT_DNS_SERVER;
+        if (strcmp(opt, "port") == 0)         return OPT_PORT;
+        if (strcmp(opt, "foreground") == 0)   return OPT_FOREGROUND;
+        if (strcmp(opt, "help") == 0)         return OPT_HELP;
+        
+        return OPT_UNKNOWN;
+    }
+    
+     return OPT_UNKNOWN;
+}
+
+// 读取环境变量
+void read_env(const char *env_name, const char *default_val, char *dest, size_t dest_size) {
+    if (!env_name || !default_val || !dest || dest_size == 0) {
+        log_msg(LOG_FATAL, "Invalid parameters for read_env_variable");
+        exit(1);
+    }
+
+    const char *env_value = getenv(env_name);
+    if (env_value) {
+        strncpy(dest, env_value, dest_size - 1);
+        dest[dest_size - 1] = '\0';
+    } else {
+        strncpy(dest, default_val, dest_size - 1);
+        dest[dest_size - 1] = '\0';
+    }
+}
+
+// 检查是否是匹配后缀
+int is_match_suffix(const char *name) {
     if (!name) return 0;
     size_t len = strlen(name);
+    size_t suffix_len = strlen(suffix_domain);
     if (len > 0 && name[len-1] == '.') len--;
-    int result = (len >= 7 && strncasecmp(name + len - 7, ".docker", 7) == 0);
-    log_msg(LOG_DEBUG, "Checking if '%s' is docker domain: %s",
-        name, result ? "YES" : "NO");
+    int result = (len >= suffix_len && strncasecmp(name + len - suffix_len, suffix_domain, suffix_len) == 0);
+    log_msg(LOG_DEBUG, "Checking if '%s' is %s domain: %s",
+        name, suffix_domain, result ? "YES" : "NO");
     return result;
 }
 
-// 移除.docker后缀
-void strip_docker_suffix(char *name) {
+// 移除域名后缀
+void strip_suffix(char *name) {
     if (!name) return;
     size_t len = strlen(name);
 
@@ -81,10 +167,11 @@ void strip_docker_suffix(char *name) {
         len--;
     }
     
-    // 然后移除.docker后缀
-    if (len >= 7) {
-        name[len - 7] = '\0';
-        log_msg(LOG_DEBUG, "Stripped .docker suffix, new name: '%s'", name);
+    // 然后移除后缀
+    size_t suffix_len = strlen(suffix_domain);
+    if (len >= suffix_len) {
+        name[len - suffix_len] = '\0';
+        log_msg(LOG_DEBUG, "Stripped %s suffix, new name: '%s'", suffix_domain, name);
     }
 }
 
@@ -102,9 +189,9 @@ int is_gateway_domain(const char *name) {
         len--;
     }
 
-    // 构建预期的网关域名格式：gateway.docker
+    // 构建预期的网关域名格式
     char expected_gateway[512];
-    snprintf(expected_gateway, sizeof(expected_gateway), "%s.docker", gateway_name);
+    snprintf(expected_gateway, sizeof(expected_gateway), "%s%s", gateway_name, suffix_domain);
     
     int result = (strcasecmp(temp_name, expected_gateway) == 0);
     log_msg(LOG_DEBUG, "Checking if '%s' matches gateway domain '%s': %s", 
@@ -222,7 +309,7 @@ ldns_pkt* create_gateway_response(ldns_pkt *query_pkt, ldns_rr *qrr, struct in_a
             // 添加到答案段
             ldns_pkt_push_rr(resp_pkt, LDNS_SECTION_ANSWER, answer_rr);
             char* modified_name = strdup(qname_str);
-            strip_docker_suffix(modified_name);
+            strip_suffix(modified_name);
             log_msg(LOG_DEBUG, "Successfully created gateway A record response");
             log_msg(LOG_INFO, "Gateway A query '%s' from %s -> %s is gateway", 
                 modified_name, 
@@ -250,7 +337,7 @@ ldns_resolver* create_fresh_resolver() {
         return NULL;
     }
 
-    ldns_rdf *ns_rdf = ldns_rdf_new_frm_str(LDNS_RDF_TYPE_A, FORWARD_DNS);
+    ldns_rdf *ns_rdf = ldns_rdf_new_frm_str(LDNS_RDF_TYPE_A, forward_dns);
     if (!ns_rdf) {
         log_msg(LOG_ERROR, "Failed to create nameserver RDF for fresh resolver");
         ldns_resolver_deep_free(fresh_resolver);
@@ -269,7 +356,7 @@ ldns_resolver* create_fresh_resolver() {
 
 // 测试与转发DNS服务器的连接
 int test_forward_dns() {
-    log_msg(LOG_DEBUG, "Testing connection to forward DNS server %s", FORWARD_DNS);
+    log_msg(LOG_DEBUG, "Testing connection to forward DNS server %s", forward_dns);
     
     ldns_resolver *test_resolver = ldns_resolver_new();
     if (!test_resolver) {
@@ -277,9 +364,9 @@ int test_forward_dns() {
         return 0;
     }
 
-    ldns_rdf *ns_rdf = ldns_rdf_new_frm_str(LDNS_RDF_TYPE_A, FORWARD_DNS);
+    ldns_rdf *ns_rdf = ldns_rdf_new_frm_str(LDNS_RDF_TYPE_A, forward_dns);
     if (!ns_rdf) {
-        log_msg(LOG_ERROR, "Failed to create nameserver RDF for %s", FORWARD_DNS);
+        log_msg(LOG_ERROR, "Failed to create nameserver RDF for %s", forward_dns);
         ldns_resolver_deep_free(test_resolver);
         return 0;
     }
@@ -300,12 +387,12 @@ int test_forward_dns() {
         ldns_rdf_deep_free(test_name);
         
         if (test_resp) {
-            log_msg(LOG_DEBUG, "Forward DNS server %s is reachable", FORWARD_DNS);
+            log_msg(LOG_DEBUG, "Forward DNS server %s is reachable", forward_dns);
             ldns_pkt_free(test_resp);
             ldns_resolver_deep_free(test_resolver);
             return 1;
         } else {
-            log_msg(LOG_DEBUG, "Forward DNS server %s is not responding", FORWARD_DNS);
+            log_msg(LOG_DEBUG, "Forward DNS server %s is not responding", forward_dns);
         }
     }
     
@@ -360,9 +447,9 @@ void process_query(int sockfd, const char *buf, ssize_t len,struct sockaddr_in *
 
     ldns_pkt *resp_pkt = NULL;
 
-    // 首先检查是否是docker域名
-    if (!is_docker_domain(qname_str)) {
-        log_msg(LOG_DEBUG, "Not a .docker domain, returning REFUSED");
+    // 首先检查是否是配后缀的域名
+    if (!is_match_suffix(qname_str)) {
+        log_msg(LOG_DEBUG, "Not a %s domain, returning REFUSED", suffix_domain);
     } 
     else {
         // 然后检查是否是网关域名
@@ -370,16 +457,16 @@ void process_query(int sockfd, const char *buf, ssize_t len,struct sockaddr_in *
             log_msg(LOG_DEBUG, "Handling gateway domain: %s", qname_str);
             resp_pkt = create_gateway_response(query_pkt, qrr, client->sin_addr);
         }
-        // 其他docker域名
+        // 其他匹配后缀的域名
         else {
             char *modified_name = strdup(qname_str);
             if (modified_name) {
-                strip_docker_suffix(modified_name);
+                strip_suffix(modified_name);
                 log_msg(LOG_INFO, "Forwarding %s query for '%s' from %s to %s",
                         ldns_rr_type2str(ldns_rr_get_type(qrr)),
                         modified_name,
                         inet_ntoa(client->sin_addr),
-                        FORWARD_DNS);
+                        forward_dns);
 
                 ldns_rdf *rdf_name = NULL;
                 if (ldns_str2rdf_dname(&rdf_name, modified_name) == LDNS_STATUS_OK && rdf_name) {
@@ -515,71 +602,149 @@ void process_query(int sockfd, const char *buf, ssize_t len,struct sockaddr_in *
     ldns_pkt_free(query_pkt);
 }
 
+// 初始化配置
+void init_config(int argc, char *argv[]) {
+
+    // 从环境变量读取
+    log_level = get_log_level(LOG_LEVEL_ENV, LOG_INFO);
+    read_env(GATEWAY_ENV, GATEWAY_DEFAULT, gateway_name, sizeof(gateway_name));
+    read_env(CONTAINER_ENV, CONTAINER_DEFAULT, container_name, sizeof(container_name));
+    read_env(SUFFIX_ENV, SUFFIX_DEFAULT, suffix_domain, sizeof(suffix_domain));
+    read_env(FORWARD_DNS_ENV, FORWARD_DNS, forward_dns, sizeof(forward_dns));
+
+    char *endptr;
+    const char *env_port;
+    env_port = getenv(LISTEN_PORT_ENV);
+    if (env_port != NULL){
+        listen_port = strtol(env_port, &endptr, 10);
+        if (listen_port <= 0 || listen_port > 65535) {
+            log_msg(LOG_FATAL, "Invalid port number %d", env_port);
+            exit(1);
+        }
+    }
+
+    // 从命令行参数读取
+    for (int i = 1; i < argc; i++) {
+        OptionType opt = get_option_type(argv[i]);
+        
+        switch (opt) {
+            case OPT_LOG_LEVEL:
+                if (i + 1 >= argc) {
+                    log_msg(LOG_FATAL, "--log-level requires a value");
+                    exit(1);
+                }
+                const char* level_str = argv[++i];
+                int conv_level = parse_log_level(level_str, -1);
+                if (conv_level >= LOG_DEBUG){
+                    log_level = conv_level;
+                } else {
+                    log_msg(LOG_FATAL,"Invalid log level '%s'", level_str);
+                    exit(1);
+                }
+                break;                
+            case OPT_GATEWAY:
+                if (i + 1 >= argc) {
+                    log_msg(LOG_FATAL, "--gateway requires a value");
+                    exit(1);
+                }
+                strncpy(gateway_name, argv[++i], sizeof(gateway_name) - 1);
+                gateway_name[sizeof(gateway_name) - 1] = '\0';
+                break;
+            case OPT_SUFFIX:
+                if (i + 1 >= argc) {
+                    log_msg(LOG_FATAL, "--suffix requires a value");
+                    exit(1);
+                }
+                strncpy(suffix_domain, argv[++i], sizeof(suffix_domain) - 1);
+                suffix_domain[sizeof(suffix_domain) - 1] = '\0';
+                break;
+            case OPT_CONTAINER:
+                if (i + 1 >= argc) {
+                    log_msg(LOG_FATAL, "--container requires a value");
+                    exit(1);
+                }
+                strncpy(container_name, argv[++i], sizeof(container_name) - 1);
+                container_name[sizeof(container_name) - 1] = '\0';
+                break;
+                
+            case OPT_DNS_SERVER:
+                if (i + 1 >= argc) {
+                    log_msg(LOG_FATAL,  "--dns-server requires a value");
+                    exit(1);
+                }
+                strncpy(forward_dns, argv[++i], sizeof(forward_dns) - 1);
+                forward_dns[sizeof(forward_dns) - 1] = '\0';
+                break;
+                
+            case OPT_PORT:
+                if (i + 1 >= argc) {
+                    log_msg(LOG_FATAL, "--port requires a value");
+                    exit(1);
+                }
+                char *argv_port = argv[++i];
+                listen_port = strtol(argv_port, &endptr, 10);
+                if (listen_port <= 0 || listen_port > 65535) {
+                    log_msg(LOG_FATAL, "Invalid port number %d", argv_port);
+                    exit(1);
+                }
+                break;
+                
+            case OPT_FOREGROUND:
+                foreground = 1;
+                break;
+                
+            case OPT_HELP:
+                print_help(argv[0]);
+                exit(0);
+                
+            case OPT_UNKNOWN:
+                fprintf(stderr, "Error: Unknown option '%s'\n", argv[i]);
+                print_help(argv[0]);
+                exit(1);
+        }
+    }
+
+    // 防止后缀.缺失
+    if (suffix_domain[0] != '\0' && suffix_domain[0] != '.') {
+        memmove(suffix_domain + 1, suffix_domain, strlen(suffix_domain) + 1);
+        suffix_domain[0] = '.';
+    }
+
+}
+
 // 主程序入口
 int main(int argc, char *argv[]) {
 
-    int foreground = 0;
-
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "--foreground") == 0) {
-            foreground = 1;
-            break;
-        } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-            print_help(argv[0]);
-            return 0;
-        } else {
-            fprintf(stderr, "Unknown option: %s\n", argv[i]);
-            print_help(argv[0]);
-            return 1;
-        }
-    }
+    init_config(argc, argv);
 
     if (!foreground) daemonize();
 
     signal(SIGTERM, handle_sigterm);
     signal(SIGINT, handle_sigterm);
 
-    log_level = get_log_level(LOG_LEVEL, LOG_INFO);
-    log_msg(LOG_INFO, "Starting Docker DNS forwarder (log level=%d->%s)", log_level, level_str[log_level]);
+    log_msg(LOG_INFO, "Starting Sharky DNS forwarder (log level=%d->%s)", log_level, level_str[log_level]);
 
-    // 读取GATEWAY环境变量
-    const char *gateway_env = getenv("GATEWAY");
-    if (gateway_env) {
-        strncpy(gateway_name, gateway_env, sizeof(gateway_name) - 1);
-        log_msg(LOG_DEBUG, "Gateway name from environment: '%s'", gateway_name);
-    } else {
-        strncpy(gateway_name, "gateway", sizeof(gateway_name) - 1);
-        gateway_name[sizeof(gateway_name) - 1] = '\0';
-        log_msg(LOG_DEBUG, "No GATEWAY environment variable set, using default: '%s'",
-             gateway_name);
-    }
-    // 读取CONTAINER_NAME环境变量
-    const char *container_env = getenv("CONTAINER_NAME");
-    if (container_env) {
-        strncpy(container_name, container_env, sizeof(container_name) - 1);
-        log_msg(LOG_DEBUG, "Container name from environment: '%s'", container_name);
-    } else {
-        strncpy(container_name, "docker-dns", sizeof(container_name) - 1);
-        container_name[sizeof(container_name) - 1] = '\0';
-        log_msg(LOG_DEBUG, "No CONTAINER_NAME environment variable set, using default: '%s'",
-            container_name);
-    }
-
+    log_msg(LOG_INFO, "Set container name to %s", container_name);
+        
     if (!test_forward_dns()) {
         log_msg(LOG_WARN, "Forward DNS server may not be available");
-    }
+    } 
 
     int sockfd;
     struct sockaddr_in server_addr, client_addr;
     socklen_t client_len = sizeof(client_addr);
     uint8_t buf[BUF_SIZE];
 
-    // 初始化网关IP地址
     gateway_addr.s_addr = 0;
     if (resolve_gateway_ip() != 0) {
         log_msg(LOG_WARN, "Failed to resolve gateway IP at startup");
     } else {
-        log_msg(LOG_INFO, "Gateway IP resolved to: %s", inet_ntoa(gateway_addr));
+        if (gateway_name[0]) {
+            log_msg(LOG_INFO, "Gateway %s%s IP resolved to: %s",gateway_name ,suffix_domain , inet_ntoa(gateway_addr));
+        } else {
+            log_msg(LOG_WARN, "Gateway name undefined");
+            log_msg(LOG_INFO, "Gateway IP resolved to: %s", inet_ntoa(gateway_addr));
+        }
     }
 
     sockfd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -599,10 +764,10 @@ int main(int argc, char *argv[]) {
 
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY;
-    server_addr.sin_port = htons(LISTEN_PORT);
+    server_addr.sin_port = htons(listen_port);
 
     if (bind(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        log_msg(LOG_FATAL, "Failed to bind socket to port %d", LISTEN_PORT);
+        log_msg(LOG_FATAL, "Failed to bind socket to port %d", listen_port);
         perror("bind"); 
         close(sockfd);
         return 1;
@@ -616,13 +781,8 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    if (gateway_name[0]) {
-        log_msg(LOG_DEBUG, "Special handling for %s.docker -> %s", 
-            gateway_name, inet_ntoa(gateway_addr));
-    }
-
-    log_msg(LOG_INFO, "DNS forwarder listening on port %d, forwarding *.docker to %s",
-            LISTEN_PORT, FORWARD_DNS);
+    log_msg(LOG_INFO, "DNS forwarder listening on port %d, forwarding *%s to %s",
+            listen_port, suffix_domain, forward_dns);
 
     while (!stop) {
 

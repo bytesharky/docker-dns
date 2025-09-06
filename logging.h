@@ -16,5 +16,6 @@ extern const char *level_str[];
 
 void log_msg(log_level_t level, const char *format, ...);
 int get_log_level(const char *env, int default_val);
+int parse_log_level(const char *level_str, int default_val);
 
 #endif // LOGGING_H
