@@ -42,4 +42,8 @@ FROM scratch
 
 COPY --from=builder /src/docker-dns /docker-dns
 
+EXPOSE 53/udp
+
 ENTRYPOINT ["/docker-dns"]
+
+CMD ["-f"]
