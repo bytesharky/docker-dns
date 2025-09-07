@@ -23,24 +23,25 @@ RUN  ./configure --enable-static --disable-shared --with-ssl=/usr LDFLAGS="-stat
     make install
 
 # 复制程序源码
-COPY docker-dns.c /src/
-COPY logging.c /src/
-COPY logging.h /src/
+WORKDIR /app
+COPY /src ./src
+COPY /include ./include
+
+# 增加静态标记
+RUN sed -i -E 's/^#define[[:space:]]+VERSION[[:space:]]+"([^"]+)"/#define VERSION "\1(static)"/' ./include/config.h
 
 # 编译成静态二进制
-RUN gcc -static -O2 -s -o /src/docker-dns /src/docker-dns.c /src/logging.c \
-    -I/usr/local/include \
-    /usr/local/lib/libldns.a \
-    -lssl -lcrypto -levent -lz -lpthread
+RUN gcc -static -O2 -s -o ./docker-dns ./src/*.c \
+    -I./include -lldns -lssl -lcrypto -levent -lz -lpthread
 
-RUN upx --best --lzma /src/docker-dns
+RUN upx --best --lzma ./docker-dns
 
 # ========================
 # Stage 2: Runtime
 # ========================
 FROM scratch
 
-COPY --from=builder /src/docker-dns /docker-dns
+COPY --from=builder /app/docker-dns /docker-dns
 
 EXPOSE 53/udp
 
