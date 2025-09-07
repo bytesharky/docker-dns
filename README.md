@@ -217,19 +217,22 @@ Docker DNS 转发器相当于宿主机与 Docker 内置 DNS 之间的“桥梁�
 
 ## 附：命令行参数/环境变量说明
 
-| 命令行选项 | 环境变量 | 说明 | 默认值 |
-|------------|----------|------|--------|
-| `-L, --log-level` | `LOG_LEVEL` | 设置日志级别 | INFO |
-| `-G, --gateway` | `GATEWAY_NAME` | 设置网关名称 | gateway |
-| `-S, --suffix` | `SUFFIX_DOMAIN` | 设置后缀名称 | .docker |
-| `-C, --container` | `CONTAINER_NAME` | 设置容器名称 | docker-dns |
-| `-D, --dns-server` | `FORWARD_DNS` | 设置转发DNS服务器 | 127.0.0.11 |
-| `-P, --port` | `LISTEN_PORT` | 设置监听端口 | 53 |
-| `-f, --foreground` | - | 以前台模式运行（不守护进程） | 默认后台运行 |
-| `-h, --help` | - | 显示帮助信息并退出 | - |
+| 短选项 | 长选项          | 环境变量         | 功能说明                                                     | 默认值           |
+| ------ | --------------- | ---------------- | ------------------------------------------------------------ | ---------------- |
+| `-L`   | `--log-level`   | `LOG_LEVEL`      | 设置日志输出级别，控制日志的详细程度                         | `INFO`           |
+| `-G`   | `--gateway`     | `GATEWAY_NAME`   | 设置网关名称，在Docker中网关为宿主机，该选项允许在docker容器中通过`网关名称.后缀`，自动解析到宿主机IP地址。 | `gateway`        |
+| `-S`   | `--suffix`      | `SUFFIX_DOMAIN`  | 设置后缀名称，要转发的域名后缀                               | `.docker`        |
+| `-C`   | `--container`   | `CONTAINER_NAME` | 设置容器名称，仅用于启动服务时向转发服务器发送`容器名.后缀`的解析请求，以测试连通性。 | `docker-dns`     |
+| `-D`   | `--dns-server`  | `FORWARD_DNS`    | 设置转发DNS服务器，即该服务收到指定后缀的DNS查询后，转发请求的目标服务器，默认docker内置DNS | `127.0.0.11`     |
+| `-P`   | `--port`        | `LISTEN_PORT`    | 设置服务的监听端口                                           | `53`             |
+| `-K`   | `--keep-suffix` | `KEEP_SUFFIX`    | 控制转发DNS查询时是否保留后缀，转发到`127.0.0.11`时应去除后缀 | -                |
+| `-M`   | `--max-hops`    | `MAX_HOPS`       | 设置DNS查询的最大跳转（ hop ）次数，防止循环查询             | `3`              |
+| `-W`   | `--workers`     | `NUM_WORKERS`    | 设置服务的工作线程数                                         | `4`              |
+| `-f`   | `--foreground`  | -                | 以“前台模式”运行服务（不转入后台守护进程）                   | 未启用(默认后台) |
+| `-h`   | `--help`        | -                | 显示帮助信息（即当前选项列表及说明），然后退出命令           | -                |
 
 ```bash
-./docker-dns -h
+root@VM-4-2-debian:~# ./docker-dns/docker-dns -h
 Usage: ./docker-dns [OPTIONS]
 Options:
   -L, --log-level    Set log level (DEBUG, default: INFO, WARN, ERROR, FATAL)
@@ -238,8 +241,24 @@ Options:
   -C, --container    Set container name (default: docker-dns)
   -D, --dns-server   Set forward DNS server (default: 127.0.0.11)
   -P, --port         Set listening port (default: 53)
+  -K, --keep-suffix  keep suffix forward dns query (default: strip)
+  -M, --max-hops     Set maximum hop count (default: 3)
+  -W, --workers      Set number of worker threads (default: 4)
   -f, --foreground   Run in foreground mode (do not daemonize)
   -h, --help         Show this help message and exit
+
+Environment variable:
+  Command-line arguments take precedence over environment variables.
+  --log-level    =>  LOG_LEVEL
+  --gateway      =>  GATEWAY_NAME
+  --suffix       =>  SUFFIX_DOMAIN
+  --container    =>  CONTAINER_NAME
+  --dns-server   =>  FORWARD_DNS
+  --port         =>  LISTEN_PORT
+  --keep-suffix  =>  KEEP_SUFFIX
+  --max-hops     =>  MAX_HOPS
+  --workers      =>  NUM_WORKERS
+
 ```
 
 ---
