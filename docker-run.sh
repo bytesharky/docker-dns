@@ -6,9 +6,12 @@ DEFAULT_GATEWAY_IP="172.18.0.1"
 DEFAULT_NETWORK_ADDRESS="172.18.0.0/24"
 DEFAULT_RESOLV="/etc/resolv.conf"
 DEFAULT_CONTAINER_NAME="docker-dns"
-DEFAULT_IMAGE_NAME="docker-dns:alpine"
+DEFAULT_IMAGE_NAME="docker-dns:static"
+REMOTE_IMAGE_NAME="ccr.ccs.tencentyun.com/sharky/$DEFAULT_IMAGE_NAME"
 DEFAULT_TZ="Asia/Shanghai"
 MUSL_TZ=""
+LOG_LEVEL="INFO"
+GATEWAY_NAME="gateway"
 
 # ========================
 # 启动容器函数
@@ -18,14 +21,14 @@ start_container() {
     echo "启动容器 $name..."
     docker run -d \
         -e "TZ=$MUSL_TZ" \
-        -e "DEBUG=false" \
-        -e "GATEWAY=gateway" \
+        -e "LOG_LEVEL=$LOG_LEVEL" \
+        -e "GATEWAY_NAME=$GATEWAY_NAME" \
         -e "CONTAINER_NAME=$CONTAINER_NAME" \
         --network "$DOCKER_NET" \
         --name "$name" \
         -p 53:53/udp \
         --restart unless-stopped \
-        "$IMAGE_NAME"
+        "$LOCAL_IMAGE_NAME"
 }
 
 # ========================
@@ -98,7 +101,7 @@ read -p "请输入容器名称 (默认: $DEFAULT_CONTAINER_NAME): " CONTAINER_NA
 CONTAINER_NAME=${CONTAINER_NAME:-$DEFAULT_CONTAINER_NAME}
 
 read -p "请输入镜像名称 (默认: $DEFAULT_IMAGE_NAME): " IMAGE_NAME
-IMAGE_NAME=${IMAGE_NAME:-$DEFAULT_IMAGE_NAME}
+LOCAL_IMAGE_NAME=${LOCAL_IMAGE_NAME:-$DEFAULT_IMAGE_NAME}
 
 DEFAULT_TZ=$(get_system_timezone)
 
@@ -114,7 +117,7 @@ echo "网关IP地址: $GATEWAY_IP"
 echo "网络地址: $NETWORK_ADDRESS"
 echo "resolv路径: $RESOLV"
 echo "容器名称: $CONTAINER_NAME"
-echo "镜像名称: $IMAGE_NAME"
+echo "镜像名称: $LOCAL_IMAGE_NAME"
 echo "标准时区: $TZ"
 echo "musl 时区: $MUSL_TZ"
 echo "----------------------------------------"
@@ -145,49 +148,36 @@ else
     echo "Docker 网络 $DOCKER_NET 已存在"
 fi
 
-# ========================
-# 构建镜像（可选）
-# ========================
-# echo "构建镜像..."
-# git clone https://github.com/bytesharky/docker-dns
-# cd docker-dns
-# docker build -t $IMAGE_NAME .
-# echo "镜像构建完成"
-
-# ========================
-# 拉取镜像
-# ========================
-# echo "拉取镜像..."
-# docker pull ccr.ccs.tencentyun.com/sharky/docker-dns:alpine
-# docker tag ccr.ccs.tencentyun.com/sharky/docker-dns:alpine $IMAGE_NAME
-# echo "镜像拉取完成"
 
 echo "请选择操作："
 echo "1) 构建镜像"
 echo "2) 拉取镜像"
+echo "3) 本地镜像"
 
 while true; do
     read -r -p "请输入选项 [1-2]: " choice
     case "$choice" in
         1)
             echo "构建镜像..."
-            docker build -t "$IMAGE_NAME" .
+            docker build -t "$LOCAL_IMAGE_NAME" .
             echo "镜像构建完成"
             break
             ;;
         2)
             echo "拉取镜像..."
-            docker pull ccr.ccs.tencentyun.com/sharky/docker-dns:alpine
-            docker tag ccr.ccs.tencentyun.com/sharky/docker-dns:alpine "$IMAGE_NAME"
+            docker pull "$REMOTE_IMAGE_NAME"
+            docker tag "$REMOTE_IMAGE_NAME" "$LOCAL_IMAGE_NAME"
             echo "镜像拉取完成"
             break
             ;;
+        3) break;;
         *) ;;
     esac
 done
 
 # ========================
-# 修改 resolv.conf：保证第一DNS是127.0.0.1
+# 修改 resolv.conf
+# 保证第一DNS是127.0.0.1
 # ========================
 echo "设置 DNS 服务器为 127.0.0.1"
 
