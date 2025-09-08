@@ -21,8 +21,8 @@ void print_help(const char *progname) {
     printf("  -h, --help         Show this help message and exit\n");
     printf("  -v, --version      Show version and exit\n");
     printf("\n");
-    printf("Environment variable:\n");    printf("version: %s\n", VERSION);
-    printf("  Command-line arguments take precedence over environment variables.");
+    printf("Environment variable:\n");
+    printf("  Command-line arguments take precedence over environment variables.\n");
     printf("  --log-level    =>  LOG_LEVEL\n");
     printf("  --gateway      =>  GATEWAY_NAME\n");
     printf("  --suffix       =>  SUFFIX_DOMAIN\n");
@@ -32,6 +32,7 @@ void print_help(const char *progname) {
     printf("  --keep-suffix  =>  KEEP_SUFFIX\n");
     printf("  --max-hops     =>  MAX_HOPS\n");
     printf("  --workers      =>  NUM_WORKERS\n");
+    printf("\n");
 }
 
 // 处理命令行选项
