@@ -8,4 +8,4 @@ cd "$SCRIPT_DIR" || exit
 
 chmod +x ./docker-build.sh
 
-./docker-build.sh ${TAG}
+./docker-build.sh $TAG $1

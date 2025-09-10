@@ -1,26 +1,61 @@
 #!/bin/sh
 
-# 定义默认值
+# ========================
+# 国际化设置
+# ========================
+
+# 默认语言
+DEFAULT_LANG="en"
+
+# 从环境变量获取语言设置，默认为英文
+LANGUAGE="${LANGUAGE:-$DEFAULT_LANG}"
+
+# 语言文件目录
+LANG_DIR="./langs"
+
+# 加载对应的语言文件
+load_language() {
+    local lang_file="$LANG_DIR/${1}.sh"
+    
+    if [ -f "$lang_file" ]; then
+        # shellcheck source=/dev/null
+        . "$lang_file"
+        echo "Loaded language file: $lang_file" >&2
+    else
+        echo "Language file $lang_file not found, using default (en)" >&2
+        # shellcheck source=/dev/null
+        . "$LANG_DIR/en.sh"
+    fi
+}
+
+# 创建语言目录（如果不存在）
+mkdir -p "$LANG_DIR"
+
+# 加载语言文件
+load_language "$LANGUAGE"
+
+# ========================
+# 默认配置
+# ========================
 DEFAULT_DOCKER_NET="docker-net"
 DEFAULT_GATEWAY_IP="172.18.0.1"
 DEFAULT_NETWORK_ADDRESS="172.18.0.0/24"
 DEFAULT_RESOLV="/etc/resolv.conf"
 DEFAULT_CONTAINER_NAME="docker-dns"
 DEFAULT_IMAGE_NAME="docker-dns:static"
-REMOTE_IMAGE_NAME="ccr.ccs.tencentyun.com/sharky/$DEFAULT_IMAGE_NAME"
 DEFAULT_TZ="Asia/Shanghai"
-MUSL_TZ=""
+POSIX_TZ=""
 LOG_LEVEL="INFO"
 GATEWAY_NAME="gateway"
 
 # ========================
-# 启动容器函数
+# 容器启动函数
 # ========================
 start_container() {
     name="$1"
-    echo "启动容器 $name..."
+    echo "$LANG_STARTING_CONTAINER ${1}..."
     docker run -d \
-        -e "TZ=$MUSL_TZ" \
+        -e "TZ=$POSIX_TZ" \
         -e "LOG_LEVEL=$LOG_LEVEL" \
         -e "GATEWAY_NAME=$GATEWAY_NAME" \
         -e "CONTAINER_NAME=$CONTAINER_NAME" \
@@ -32,7 +67,7 @@ start_container() {
 }
 
 # ========================
-# 获取宿主机时区名称
+# 获取主机系统时区名称
 # ========================
 get_system_timezone() {
     if command -v timedatectl >/dev/null 2>&1; then
@@ -42,26 +77,26 @@ get_system_timezone() {
     elif [ -L /etc/localtime ]; then
         readlink /etc/localtime | sed 's|/usr/share/zoneinfo/||'
     else
-        echo $DEFAULT_TZ
+        echo "$DEFAULT_TZ"
     fi
 }
 
 # ========================
-# 转换为 musl 可识别的 TZ
+# 转换为POSIX标准TZ格式
 # ========================
-to_musl_tz() {
+to_posix_tz() {
     TZ_NAME="$1"
 
     if echo "$TZ_NAME" | grep -Eq '^[Uu][Tt][Cc][+-][0-9]{1,2}(:[0-9]{1,2})?$'; then
-        # 解析 UTC±N 或 UTC±N:MM
+        # 解析UTC±N或UTC±N:MM格式
         SIGN=$(echo "$TZ_NAME" | grep -oE '[+-]' | head -n1)
         HOUR=$(echo "$TZ_NAME" | grep -oE '[0-9]{1,2}' | head -n1)
         MIN=$(echo "$TZ_NAME" | grep -oE ':[0-9]{1,2}' | cut -c2-)
     else
-        # tzdata 名称
+        # tzdata名称格式
         OFFSET=$(TZ="$TZ_NAME" date +%z)
         if [ "$OFFSET" = "+0000" ] && [ "$TZ_NAME" != "UTC" ]; then
-            echo "警告: 无法识别时区 $TZ_NAME，回退到 UTC" >&2
+            echo "$LANG_WARN_UNKNOWN_TZ $TZ_NAME, $LANG_FALLBACK_UTC" >&2
             SIGN="+"
             HOUR="00"
             MIN="00"
@@ -85,46 +120,46 @@ to_musl_tz() {
 }
 
 # 提示用户输入并处理默认值
-read -p "请输入Docker网络名称 (默认: $DEFAULT_DOCKER_NET): " DOCKER_NET
+read -p "$LANG_ENTER_DOCKER_NET ($LANG_DEFAULT: $DEFAULT_DOCKER_NET): " DOCKER_NET
 DOCKER_NET=${DOCKER_NET:-$DEFAULT_DOCKER_NET}
 
-read -p "请输入网关IP地址 (默认: $DEFAULT_GATEWAY_IP): " GATEWAY_IP
+read -p "$LANG_ENTER_GATEWAY_IP ($LANG_DEFAULT: $DEFAULT_GATEWAY_IP): " GATEWAY_IP
 GATEWAY_IP=${GATEWAY_IP:-$DEFAULT_GATEWAY_IP}
 
-read -p "请输入网络地址 (默认: $DEFAULT_NETWORK_ADDRESS): " NETWORK_ADDRESS
+read -p "$LANG_ENTER_NETWORK_ADDR ($LANG_DEFAULT: $DEFAULT_NETWORK_ADDRESS): " NETWORK_ADDRESS
 NETWORK_ADDRESS=${NETWORK_ADDRESS:-$DEFAULT_NETWORK_ADDRESS}
 
-read -p "请输入resolv路径 (默认: $DEFAULT_RESOLV): " RESOLV
+read -p "$LANG_ENTER_RESOLV_PATH ($LANG_DEFAULT: $DEFAULT_RESOLV): " RESOLV
 RESOLV=${RESOLV:-$DEFAULT_RESOLV}
 
-read -p "请输入容器名称 (默认: $DEFAULT_CONTAINER_NAME): " CONTAINER_NAME
+read -p "$LANG_ENTER_CONTAINER_NAME ($LANG_DEFAULT: $DEFAULT_CONTAINER_NAME): " CONTAINER_NAME
 CONTAINER_NAME=${CONTAINER_NAME:-$DEFAULT_CONTAINER_NAME}
 
-read -p "请输入镜像名称 (默认: $DEFAULT_IMAGE_NAME): " IMAGE_NAME
+read -p "$LANG_ENTER_IMAGE_NAME ($LANG_DEFAULT: $DEFAULT_IMAGE_NAME): " IMAGE_NAME
 LOCAL_IMAGE_NAME=${LOCAL_IMAGE_NAME:-$DEFAULT_IMAGE_NAME}
 
 DEFAULT_TZ=$(get_system_timezone)
 
-read -p "请输入时区名称或UTC±N (默认: $DEFAULT_TZ): " TZ
+read -p "$LANG_ENTER_TIMEZONE ($LANG_DEFAULT: $DEFAULT_TZ): " TZ
 TZ=${TZ:-$DEFAULT_TZ}
-MUSL_TZ=$(to_musl_tz "$TZ")
+POSIX_TZ=$(to_posix_tz "$TZ")
 
 # 显示最终配置
 echo "----------------------------------------"
-echo "已配置的参数："
-echo "Docker网络名称: $DOCKER_NET"
-echo "网关IP地址: $GATEWAY_IP"
-echo "网络地址: $NETWORK_ADDRESS"
-echo "resolv路径: $RESOLV"
-echo "容器名称: $CONTAINER_NAME"
-echo "镜像名称: $LOCAL_IMAGE_NAME"
-echo "标准时区: $TZ"
-echo "musl 时区: $MUSL_TZ"
+echo "$LANG_CONFIGURED_PARAMS:"
+echo "$LANG_DOCKER_NET: $DOCKER_NET"
+echo "$LANG_GATEWAY_IP: $GATEWAY_IP"
+echo "$LANG_NETWORK_ADDR: $NETWORK_ADDRESS"
+echo "$LANG_RESOLV_PATH: $RESOLV"
+echo "$LANG_CONTAINER_NAME: $CONTAINER_NAME"
+echo "$LANG_IMAGE_NAME: $LOCAL_IMAGE_NAME"
+echo "$LANG_STD_TIMEZONE: $TZ"
+echo "$LANG_POSIX_TIMEZONE: $POSIX_TZ"
 echo "----------------------------------------"
 
 # 确认继续
 while true; do
-    read -p "是否确认继续部署? (Y/N) " yn
+    read -p "$LANG_CONFIRM_DEPLOY? (Y/N) " yn
     yn=${yn}
     case $yn in
         [Yy]* ) break;;
@@ -134,64 +169,37 @@ while true; do
 done
 
 # ========================
-# 检查 Docker 网络
+# 检查Docker网络
 # ========================
 if ! docker network inspect "$DOCKER_NET" >/dev/null 2>&1; then
-    echo "Docker 网络 $DOCKER_NET 不存在，正在创建..."
+    echo "$LANG_NETWORK_NOT_EXIST $DOCKER_NET, $LANG_CREATING..."
     if docker network create "$DOCKER_NET" --subnet="$NETWORK_ADDRESS" --gateway="$GATEWAY_IP"; then
-        echo "Docker 网络 $DOCKER_NET 创建成功"
+        echo "$LANG_NETWORK_CREATED $DOCKER_NET"
     else
-        echo "Docker 网络 $DOCKER_NET 创建失败"
+        echo "$LANG_NETWORK_CREATE_FAILED $DOCKER_NET"
         exit 1
     fi
 else
-    echo "Docker 网络 $DOCKER_NET 已存在"
+    echo "$LANG_NETWORK_EXISTS $DOCKER_NET"
 fi
 
-
-echo "请选择操作："
-echo "1) 构建镜像"
-echo "2) 拉取镜像"
-echo "3) 本地镜像"
-
-while true; do
-    read -r -p "请输入选项 [1-2]: " choice
-    case "$choice" in
-        1)
-            echo "构建镜像..."
-            docker build -t "$LOCAL_IMAGE_NAME" .
-            echo "镜像构建完成"
-            break
-            ;;
-        2)
-            echo "拉取镜像..."
-            docker pull "$REMOTE_IMAGE_NAME"
-            docker tag "$REMOTE_IMAGE_NAME" "$LOCAL_IMAGE_NAME"
-            echo "镜像拉取完成"
-            break
-            ;;
-        3) break;;
-        *) ;;
-    esac
-done
-
 # ========================
-# 修改 resolv.conf
-# 保证第一DNS是127.0.0.1
+# 修改resolv.conf
+# 确保第一个DNS是127.0.0.1
 # ========================
-echo "设置 DNS 服务器为 127.0.0.1"
+echo "$LANG_SETTING_DNS 127.0.0.1"
 
-# 如果是软链接，解析实际文件
+# 如果是符号链接，解析实际文件
 TARGET=$(readlink -f "$RESOLV")
 [ -z "$TARGET" ] && TARGET="$RESOLV"
 
 first_dns=$(grep '^nameserver' "$TARGET" | head -n1 | awk '{print $2}')
 if [ "$first_dns" = "127.0.0.1" ]; then
-    echo "DNS 已经正确，无需修改"
+    echo "$LANG_DNS_ALREADY_CONFIGURED"
 else
     TMPFILE=$(mktemp)
 
-    # 拿到 nameserver 列表，排除 127.0.0.1
+    # 获取nameservers列表并排除127.0.0.1
     orig_dns=$(grep '^nameserver' "$TARGET" | awk '{print $2}' | grep -v '^127\.0\.0\.1$')
 
     {
@@ -201,44 +209,44 @@ else
       done
     } > "$TMPFILE"
 
-    # 追加非 nameserver 配置
+    # 追加非nameserver配置
     grep -v '^nameserver' "$TARGET" >> "$TMPFILE"
 
-    # 覆盖原文件
+    # 覆盖原始文件
     cat "$TMPFILE" > "$TARGET"
     rm -f "$TMPFILE"
-    echo "DNS 服务器设置完成"
+    echo "$LANG_DNS_CONFIG_COMPLETED"
 fi
 
 # ========================
 # 启动/处理容器
 # ========================
 if docker ps -a --format '{{.Names}}' | grep -q "^$CONTAINER_NAME$"; then
-    echo "容器 $CONTAINER_NAME 已存在，请选择操作："
-    echo "1) 删除并重建容器"
-    echo "2) 使用新的容器名称"
-    echo "3) 退出"
+    echo "$LANG_CONTAINER_EXISTS $CONTAINER_NAME, $LANG_SELECT_OPERATION:"
+    echo "1) $LANG_DELETE_REBUILD"
+    echo "2) $LANG_USE_NEW_NAME"
+    echo "3) $LANG_EXIT"
     
     while true; do
-        read -r -p "请输入选项 [1-3]: " choice
+        read -r -p "$LANG_ENTER_CHOICE [1-3]: " choice
         case "$choice" in
             1)
-                echo "删除旧容器..."
+                echo "$LANG_DELETING_OLD_CONTAINER..."
                 docker rm -f "$CONTAINER_NAME"
                 start_container "$CONTAINER_NAME"
                 break
                 ;;
             2)
-                read -r -p "请输入新容器名称: " newname
+                read -r -p "$LANG_ENTER_NEW_NAME: " newname
                 if [ -z "$newname" ]; then
-                    echo "名称不能为空，退出"
+                    echo "$LANG_NAME_CANNOT_BE_EMPTY, $LANG_EXITING"
                     exit 1
                 fi
                 start_container "$newname"
                 break
                 ;;
             3)
-                echo "已退出"
+                echo "$LANG_EXITED"
                 exit 0
                 ;;
             *) ;;
@@ -248,4 +256,4 @@ else
     start_container "$CONTAINER_NAME"
 fi
 
-echo "容器已启动"
+echo "$LANG_CONTAINER_STARTED_SUCCESSFULLY"
