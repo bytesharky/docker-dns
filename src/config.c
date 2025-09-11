@@ -204,7 +204,7 @@ void init_config_argc(int argc, char *argv[]) {
                 print_help(argv[0]);
                 exit(0);
             case OPT_VERSION: 
-                printf("version: %s\n", VERSION);
+                print_version();
                 exit(0);
             case OPT_UNKNOWN:
                 fprintf(stderr, "Error: Unknown option '%s'\n", argv[i]);

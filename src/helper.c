@@ -2,10 +2,11 @@
 #include "helper.h"
 #include <stdio.h>   // for printf, NULL
 #include <string.h>  // for strcmp, strlen
+#include <ldns/ldns.h>
 
 // 打印帮助信息
 void print_help(const char *progname) {
-    printf("version: %s\n", VERSION);
+    print_version();
     printf("Usage: %s [OPTIONS]\n", progname);
     printf("Options:\n");
     printf("  -L, --log-level    Set log level (DEBUG, default: INFO, WARN, ERROR, FATAL)\n");
@@ -32,6 +33,16 @@ void print_help(const char *progname) {
     printf("  --keep-suffix  =>  KEEP_SUFFIX\n");
     printf("  --max-hops     =>  MAX_HOPS\n");
     printf("  --workers      =>  NUM_WORKERS\n");
+    printf("\n");
+}
+
+// 打印版本和编译信息
+void print_version(void){
+    printf("version: %s\n", VERSION);
+    printf("built by gcc %s\n", __VERSION__);
+    printf("built by OS %s, %s\n", OS_NAME, ARCH_NAME);
+    printf("built with ldns %s\n", LDNS_VERSION);
+    printf("built on: %s %s\n", __DATE__, __TIME__);
     printf("\n");
 }
 
