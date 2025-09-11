@@ -1,143 +1,138 @@
-# Docker DNS 转发器：宿主机解析 `.docker` 域名
+# Docker DNS Forwarder: Resolve Container Names to IPs on Host Machine  
 
-在 Docker 中，容器之间通常可以通过容器名互相访问（依赖 Docker 内置 DNS `127.0.0.11`），但 **宿主机默认无法直接解析容器名**。
+In Docker, containers can typically access each other by their container names (relying on Docker's built-in DNS at `127.0.0.11`). However, the **host machine cannot resolve container names by default**.  
 
-本工具 —— **Docker DNS 转发器**，就是为了解决这个问题：让宿主机能直接用 `容器名.docker` 访问容器服务，**无需端口映射、无需修改 hosts 文件**。
+This tool —— the **Docker DNS Forwarder** , solves this problem: it allows the host to access container services directly using domain names in the format `container-name.custom-suffix`, **no port mapping required, no hosts file modification needed**.  
 
----
+## Read this in other languages
 
-## ✨ 功能特性
+[English](README.md)
 
-* **宿主机直接解析容器名**
-  在宿主机上通过 `容器名.docker` 访问容器，例如：
+[中文,Chinese](README_zh.md)
 
-  ```bash
-  curl http://myapp.docker:8080
-  ```
+## ✨ Feature Highlights  
 
-* **轻量级转发逻辑**
+### 1. Host Machine Resolves Container Names Directly  
 
-  * 匹配 `.docker` 域名 → 转发到 Docker 内置 DNS（`127.0.0.11`）解析容器 IP；
-  * 其他域名 → 返回 `REFUSED`，宿主机自动使用公共 DNS，不影响正常上网。
+By intercepting domain names that end with a custom suffix (e.g., `.docker`) and forwarding them to Docker’s built-in DNS server, the host can access containers seamlessly.  
 
-* **网关访问支持**
+Example:  
 
-  默认提供 `gateway.docker` 域名，可解析为宿主机 IP（可通过环境变量 `GATEWAY` 修改）。
+```bash
+curl http://myapp.docker:8080
+```  
 
-* **低资源占用**
+*The default suffix can be modified via command-line arguments or environment variables.*  
 
-  基于 `ldns` 库 + UDP 协议，仅用极少 CPU 和内存即可运行。
+### 2. Lightweight Forwarding Logic  
 
-* **容器内使用**
+- Domains matching `.docker` → Forwarded to Docker’s built-in DNS (`127.0.0.11`) for container IP resolution.  
+- All other domains → Return `REFUSED`, so the host automatically uses public DNS (no impact on normal internet access).  
 
-  Docker内置的DNS服务器，会将非容器名的域名转发到宿主机的DNS服务，这就意味这你也可以在Docker容器中使用类似 `gateway.docker` 的域名。
-  
-  Docker会将它转发至宿主机配置的DNS服务器（即该转发器），该转发器先去除 `.docker` 后缀变为合法容器名，再由Docker内置的DNS服务器解析得到IP地址，并返回最终结果。
+*The default forwarding address can be modified via command-line arguments or environment variables.*  
 
-* **史诗级的大小优化**
+### 3. Gateway Access Support  
 
-  针对镜像体积进行史诗级的优化，从原本 8.73MB 到目前 1.22MB 。
+A default domain `gateway.docker` is provided, which automatically resolves to the host machine’s IP.  
 
-  **原方案：** Alpine3.22(8.31MB) + ldns库(360.0KB) + docker-dns(37.3K)，最终镜像约为8.73MB。
+*The default gateway name can be modified via command-line arguments or environment variables.*  
 
-  **新方案：** Scratch(0B) + docker-dns(4.08 MB，upx压缩后1.22MB)，最终镜像约为1.22MB。
+### 4. Low Resource Footprint  
 
-  **优化过程：**
+Built on the `ldns` library and UDP protocol, it runs with minimal CPU and memory usage.  
 
-  **优化1：** 使用静态编译
+### 5. Usage Inside Containers  
 
-  **优化2：** 优化编译，去除符号表
+Docker’s built-in DNS forwards non-container-name domains to the host’s DNS service. This means you can also use domains like `gateway.docker` **inside Docker containers**:  
+Docker forwards the request to the host’s configured DNS server (i.e., this forwarder). The forwarder strips the `.docker` suffix to form a valid container name, then uses Docker’s built-in DNS to resolve the IP and return the result.  
 
-  **优化3：** 使用 UPX 压缩
+## ⚠️ Important Notes  
 
-  **优化4：** 基于 `Scratch` (空白镜像)
+- Docker’s **default bridge network (docker0)** does not support inter-container access via container names (only via IP).  
 
----
+  Use a **custom network** (created with `docker network create`) to enable normal container name resolution.  
+  For details on Docker custom networks, refer to the [official Docker documentation](https://docs.docker.com/network/bridge/).  
 
-## ⚠️ 注意事项
+- Domain name queries are **case-insensitive**.  
 
-* Docker **默认 bridge 网络（docker0）** 不支持容器名互通，只能通过 IP。
-
-  请使用 **自定义网络**（`docker network create` 创建）才能正常通过容器名解析。
-
-  有关Docker自定义网络的内容可参考Docker官方说明。
-
-* `.docker` 域名 **不区分大小写**。
-
----
-
-## 🛠️ 工作原理
+## 🛠️ Working Principle  
 
 ```mermaid
 graph TD
-    A[宿主机发起 DNS 查询] --> B{域名是否以 .docker 结尾?}
-    B -->|是| C[去掉 .docker 后缀 → 转发至 127.0.0.11]
-    C --> D[返回容器 IP 给宿主机]
-    B -->|否| E[返回 REFUSED]
-    E --> F[宿主机尝试公共 DNS 解析]
-```
+    A[Host Initiates DNS Query] --> B{Does the domain end with .docker?}
+    B -->|Yes| C[Strip .docker suffix → Forward to 127.0.0.11]
+    C --> D[Return Container IP to Host]
+    B -->|No| E[Return REFUSED]
+    E --> F[Host Attempts Public DNS Resolution]
+```  
 
-## 🚀 部署方式
+## 🚀 Deployment Methods  
 
-### 方式一：脚本自动化
+| Solution | Base Image          | Core Features                                      | Image Size                          | Build Script      |
+|----------|---------------------|----------------------------------------------------|-------------------------------------|-------------------|
+| `static` | `scratch` (empty)   | Contains only static binaries (no redundant system components) | Binary < 1.5MB                      | `build-static.sh` |
+| `alpine` | `alpine:3.22`       | Lightweight Linux distro + runtime libraries + binaries | Binary ≈ 40kB + Image ≈ 9MB         | `build-alpine.sh` |
 
-下载并运行仓库中的 `docker_dns.sh`，按提示完成部署。
+### Method 1: Script Automation  
 
-### 方式二：手动部署
+1. Download or clone the repository.  
+2. Run the build script: `build-alpine.sh` or `build-static.sh`.  
+3. Run the startup script `docker-run.sh` and follow the prompts to complete initialization and deployment.  
 
-1. 构建镜像并运行容器：
+### Method 2: Manual Deployment  
+
+1. Build the image and run the container:  
 
    ```bash
-   # 克隆源代码
+   # Clone the source code
    git clone https://github.com/bytesharky/docker-dns
-   # 国内可用镜像：
+   # Domestic mirror (China):
    # git clone https://gitee.com/bytesharky/docker-dns
 
    cd docker-dns
    docker build -t docker-dns:static .
 
-   # 启动容器
-   # 挂载时区数据（非必须，用日志显示本地时间）
-   # 设置日志级别（非必须，默认为 INFO）
+   # Start the container
+   # Mount timezone data (optional: for local time in logs)
+   # Set log level (optional: default is INFO)
    docker run -d \
      -e LOG_LEVEL=INFO \
      -e TZ=/zoneinfo/Asia/Shanghai \
      -v /usr/share/zoneinfo:/zoneinfo:ro \
      --network docker-net \
-     --name docker-dns \
+     --name docker-dns-a \
      -p 53:53/udp \
      --restart always \
      docker-dns:static
-   ```
+   ```  
 
-2. 配置宿主机 DNS
-
-   编辑 `/etc/resolv.conf`，将 `127.0.0.1` 置顶：
+2. Configure Host DNS  
+   Edit `/etc/resolv.conf` and set `127.0.0.1` as the top DNS server:  
 
    ```conf
-   nameserver 127.0.0.1       # 本地转发器
-   nameserver 223.5.5.5       # 公共 DNS 1
-   nameserver 8.8.8.8         # 公共 DNS 2
-   ```
+   nameserver 127.0.0.1       # Local forwarder
+   nameserver 223.5.5.5       # Public DNS 1
+   nameserver 8.8.8.8         # Public DNS 2
+   ```  
 
-   （可选）防止文件被系统覆盖：
+   (Optional) Prevent the file from being overwritten by the system:  
 
    ```bash
    sudo chattr +i /etc/resolv.conf
-   ```
+   ```  
 
-### 方式三：使用构建好的镜像
+### Method 3: Use a Prebuilt Image  
 
-1. 拉取我构建好的镜像
+1. Pull the prebuilt image:  
 
    ```bash
    docker pull ccr.ccs.tencentyun.com/sharky/docker-dns:static
 
    docker tag ccr.ccs.tencentyun.com/sharky/docker-dns:static docker-dns:static
    
-   # 启动容器
-   # 挂载时区数据（非必须，用日志显示本地时间）
-   # 设置日志级别（非必须，默认为 INFO）
+   # Start the container
+   # Mount timezone data (optional: for local time in logs)
+   # Set log level (optional: default is INFO)
    docker run -d \
      -e LOG_LEVEL=INFO \
      -e TZ=/zoneinfo/Asia/Shanghai \
@@ -147,89 +142,84 @@ graph TD
      -p 53:53/udp \
      --restart always \
      docker-dns:static
-   ```
+   ```  
 
-2. 配置宿主机 DNS
+2. Configure Host DNS  
+   Refer to Step 2 in **Method 2**.  
 
-   参考方式二
+## ✅ Function Verification  
 
----
+### 1. Verify Container Name Resolution  
 
-## ✅ 功能验证
+```bash
+ping -c 3 docker-dns.docker
+```  
 
-1. **验证容器名解析**
+Expected output (IP = container’s internal network address):  
 
-   ```bash
-   ping -c 3 docker-dns.docker
-   ```
+```bash
+PING docker-dns.docker (172.18.0.6): 56 data bytes
+64 bytes from 172.18.0.6: icmp_seq=1 ttl=64 time=0.05 ms
+```  
 
-   预期输出（IP 即容器内网地址）：
+### 2. Verify Public Domain Resolution  
 
-   ```bash
-   PING docker-dns.docker (172.18.0.6): 56 data bytes
-   64 bytes from 172.18.0.6: icmp_seq=1 ttl=64 time=0.05 ms
-   ```
+```bash
+ping -c 3 github.com
+```  
 
-2. **验证公共域名解析**
+Expected output (public IP):  
 
-   ```bash
-   ping -c 3 github.com
-   ```
+```bash
+PING github.com (140.82.112.4): 56 data bytes
+64 bytes from 140.82.112.4: icmp_seq=1 ttl=51 time=10.2 ms
+```  
 
-   预期输出（公共 IP）：
+## Troubleshooting  
 
-   ```bash
-   PING github.com (140.82.112.4): 56 data bytes
-   64 bytes from 140.82.112.4: icmp_seq=1 ttl=51 time=10.2 ms
-   ```
+Control the program’s output by setting the `LOG_LEVEL` environment variable (default: `INFO`).  
 
----
+Supported levels: `DEBUG`, `INFO`, `WARN`, `ERROR`, `FATAL`  
 
-## 故障排除
+### Log Level (DEBUG/INFO/WARN/ERROR/FATAL) Explanation  
 
-通过设置环境变量 `LOG_LEVEL` 来控制程序输出信息。默认为 `INFO`。
+| Number   |Log Level | Core Meaning                                                                 | Severity Level                |
+|---|--------|-----------------------------------------------------------------------------|-------------------------------|
+| 0 | DEBUG  | Debug level: Prints detailed runtime info for development/testing (aids in code debugging) | Lowest (only for dev environments) |
+| 1 | INFO   | Info level: Records key statuses of normal system operation                 | Low (safe for production; logs normal events) |
+| 2 | WARN   | Warning level: Records non-fatal exceptions or potential risks (system continues running) | Medium (monitor; may predict future issues) |
+| 3 | ERROR  | Error level: Records fatal exceptions (single DNS resolution fails, but system remains functional) | High (investigate promptly to avoid scope expansion) |
+| 4 | FATAL  | Fatal level: Records critical errors that render the system completely inoperable | Highest (system unavailable; urgent fix required) |
 
-支持的级别：`DEBUG`, `INFO`, `WARN`, `ERROR`, `FATAL`
+## 📌 Summary  
 
-### 日志级别（DEBUG/INFO/WARN/ERROR/FATAL）说明表
+The Docker DNS Forwarder acts as a "bridge" between the host machine and Docker’s built-in DNS. Its key advantages:  
 
-| 日志级别 | 核心含义 | 严重程度 |
-|----------|----------|----------|
-| 0=>DEBUG    | 调试级别，用于开发/测试阶段打印详细运行信息，辅助定位代码问题 | 最低（仅开发环境常用） |
-| 1=>INFO     | 信息级别，记录系统正常运行的关键状态 | 较低（生产环境可开启，记录正常事件） |
-| 2=>WARN     | 警告级别，记录非致命性异常或潜在风险，系统可继续运行 | 中等（需监控，可能预示后续问题） |
-| 3=>ERROR    | 错误级别，记录致命性异常，单次DNS解析失败，但不影响系统整体运行 | 较高（需及时排查，避免影响范围扩大） |
-| 4=>FATAL    | 致命级别，记录导致系统完全无法运行的严重错误 | 最高（系统不可用，需紧急处理） |
+- 🟢 Host resolves `.docker` domains seamlessly  
+- 🟢 No impact on normal internet DNS resolution  
+- 🟢 Simple deployment + minimal resource usage  
 
-## 📌 总结
+### Ideal Use Cases  
 
-Docker DNS 转发器相当于宿主机与 Docker 内置 DNS 之间的“桥梁”，特点是：
+**Development/testing environments**, or scenarios where the host needs direct access to containers via container names.  
 
-* 🟢 宿主机可无缝解析 `.docker` 域名
-* 🟢 不影响正常上网解析
-* 🟢 部署简单、占用极低
+Use **with caution in production environments** — fixed IP addresses are recommended instead.  
 
-适用于：
+## Appendix: Command-Line Arguments / Environment Variables  
 
-**开发/测试环境**，或希望宿主机直接通过容器名访问服务的场景。
-
-**生产环境**谨慎使用，更推荐固定IP方式。
-
-## 附：命令行参数/环境变量说明
-
-| 短选项 | 长选项          | 环境变量         | 功能说明                                                     | 默认值           |
-| ------ | --------------- | ---------------- | ------------------------------------------------------------ | ---------------- |
-| `-L`   | `--log-level`   | `LOG_LEVEL`      | 设置日志输出级别，控制日志的详细程度                         | `INFO`           |
-| `-G`   | `--gateway`     | `GATEWAY_NAME`   | 设置网关名称，在Docker中网关为宿主机，该选项允许在docker容器中通过`网关名称.后缀`，自动解析到宿主机IP地址。 | `gateway`        |
-| `-S`   | `--suffix`      | `SUFFIX_DOMAIN`  | 设置后缀名称，要转发的域名后缀                               | `.docker`        |
-| `-C`   | `--container`   | `CONTAINER_NAME` | 设置容器名称，仅用于启动服务时向转发服务器发送`容器名.后缀`的解析请求，以测试连通性。 | `docker-dns`     |
-| `-D`   | `--dns-server`  | `FORWARD_DNS`    | 设置转发DNS服务器，即该服务收到指定后缀的DNS查询后，转发请求的目标服务器，默认docker内置DNS | `127.0.0.11`     |
-| `-P`   | `--port`        | `LISTEN_PORT`    | 设置服务的监听端口                                           | `53`             |
-| `-K`   | `--keep-suffix` | `KEEP_SUFFIX`    | 控制转发DNS查询时是否保留后缀，转发到`127.0.0.11`时应去除后缀 | -                |
-| `-M`   | `--max-hops`    | `MAX_HOPS`       | 设置DNS查询的最大跳转（ hop ）次数，防止循环查询             | `3`              |
-| `-W`   | `--workers`     | `NUM_WORKERS`    | 设置服务的工作线程数                                         | `4`              |
-| `-f`   | `--foreground`  | -                | 以“前台模式”运行服务（不转入后台守护进程）                   | 未启用(默认后台) |
-| `-h`   | `--help`        | -                | 显示帮助信息（即当前选项列表及说明），然后退出命令           | -                |
+| Short Opt | Long Option       | Env Variable      | Description                                                                 | Default Value     |
+|-----------|-------------------|-------------------|-----------------------------------------------------------------------------|-------------------|
+| `-L`      | `--log-level`     | `LOG_LEVEL`       | Sets log verbosity (controls detail of output)                             | `INFO`            |
+| `-G`      | `--gateway`       | `GATEWAY_NAME`    | Sets gateway name (inside Docker, the gateway is the host; allows resolving the host IP via `gateway-name.suffix`) | `gateway`         |
+| `-S`      | `--suffix`        | `SUFFIX_DOMAIN`   | Sets the domain suffix for forwarded DNS queries                           | `.docker`         |
+| `-C`      | `--container`     | `CONTAINER_NAME`  | Sets container name (used to send a test `container-name.suffix` resolution request to the forwarder on startup) | `docker-dns`      |
+| `-D`      | `--dns-server`    | `FORWARD_DNS`     | Sets the target DNS server for forwarded queries (default: Docker’s built-in DNS) | `127.0.0.11`      |
+| `-P`      | `--port`          | `LISTEN_PORT`     | Sets the port the service listens on                                        | `53`              |
+| `-K`      | `--keep-suffix`   | `KEEP_SUFFIX`     | Controls whether to retain the suffix when forwarding DNS queries (strip suffix when forwarding to `127.0.0.11`) | Disabled          |
+| `-M`      | `--max-hops`      | `MAX_HOPS`        | Sets maximum hop count for DNS queries (prevents looped queries)           | `3`               |
+| `-W`      | `--workers`       | `NUM_WORKERS`     | Sets the number of worker threads for the service                           | `4`               |
+| `-f`      | `--foreground`    | -                 | Runs the service in foreground mode (does not daemonize)                   | Disabled (daemon by default) |
+| `-h`      | `--help`          | -                 | Shows this help message (lists options + descriptions) and exits            | -                 |
 
 ```bash
 root@VM-4-2-debian:~# ./docker-dns/docker-dns -h
@@ -258,7 +248,4 @@ Environment variable:
   --keep-suffix  =>  KEEP_SUFFIX
   --max-hops     =>  MAX_HOPS
   --workers      =>  NUM_WORKERS
-
 ```
-
----
