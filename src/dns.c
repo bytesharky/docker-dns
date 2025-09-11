@@ -1,12 +1,27 @@
-#include <stdio.h>
+#include "config.h"          // for forward_dns, suffix_domain, container_name
 #include "dns.h"
-#include "config.h"
-#include "logging.h"
-#include "loop_marker.h"
-#include "gateway.h"
+#include "gateway.h"         // for handle_gateway_query, is_gateway_domain
+#include "logging.h"         // for log_msg, LOG_DEBUG, LOG_ERROR, LOG_WARN
+#include "loop_marker.h"     // for add_loop_marker, get_loop_marker
+#include <arpa/inet.h>       // for inet_ntoa, ntohs
+#include <errno.h>           // for errno
+#include <netinet/in.h>      // for sockaddr_in
+#include <stdint.h>          // for uint8_t, uint16_t
+#include <stdio.h>           // for NULL
+#include <stdlib.h>          // for free
+#include <string.h>          // for strlen, strcspn, strdup, strerror
+#include <strings.h>         // for strncasecmp
+#include <sys/time.h>        // for timeval
+// #include <ldns/error.h>      // for ldns_enum_status, ldns_status
+// #include <ldns/host2str.h>   // for ldns_rr_type2str, ldns_rdf2str
+// #include <ldns/host2wire.h>  // for ldns_pkt2wire
+// #include <ldns/rr.h>         // for ldns_rr_clone, ldns_rr_list_rr, ldns_rr_...
+// #include <ldns/str2host.h>   // for ldns_str2rdf_dname
+// #include <ldns/wire2host.h>  // for ldns_wire2pkt
+#include <ldns/ldns.h>
 
 // 测试与转发DNS服务器的联通性
-int test_forward_dns() {
+int test_forward_dns(void) {
     log_msg(LOG_DEBUG, "Testing connection to forward DNS server %s", forward_dns);
     
     ldns_resolver *test_resolver = ldns_resolver_new();
@@ -63,16 +78,24 @@ int is_match_suffix(const char *name) {
     return result;
 }
 
+// 移除尾部的点（FQDN）
+void strip_dot(char *name) {
+    if (!name) return;
+    size_t len = strlen(name);
+    
+    if (len > 0 && name[len-1] == '.') {
+        name[len-1] = '\0';
+        len--;
+    }
+}
+
 // 移除域名后缀
 void strip_suffix(char *name) {
     if (!name) return;
     size_t len = strlen(name);
 
     // 先移除尾部的点（FQDN）
-    if (len > 0 && name[len-1] == '.') {
-        name[len-1] = '\0';
-        len--;
-    }
+    strip_dot(name);
     
     // 然后移除后缀
     size_t suffix_len = strlen(suffix_domain);
@@ -83,7 +106,7 @@ void strip_suffix(char *name) {
 }
 
 // 创建一个新的resolver
-ldns_resolver* create_fresh_resolver() {
+ldns_resolver* create_fresh_resolver(void) {
     ldns_resolver *fresh_resolver = ldns_resolver_new();
     if (!fresh_resolver) {
         log_msg(LOG_ERROR, "Failed to create fresh resolver");
@@ -135,7 +158,7 @@ ldns_pkt* modify_query_domain(ldns_pkt *original_pkt,  ldns_rdf *new_domain) {
 }
 
 // 处理单个DNS查询
-void process_dns_query(int sockfd, const char *buf, ssize_t len,
+void process_dns_query(int sockfd, const uint8_t *buf, ssize_t len,
                         struct sockaddr_in *client, socklen_t client_len) {
 
     log_msg(LOG_DEBUG, "Processing DNS query from %s:%d (%zd bytes)", 
@@ -199,7 +222,11 @@ void process_dns_query(int sockfd, const char *buf, ssize_t len,
             else {
                 char *modified_name = strdup(qname_str);
                 if (modified_name) {
-                    if (!keep_suffix) strip_suffix(modified_name);
+                    if (!keep_suffix){
+                        strip_suffix(modified_name);
+                    } else {
+                        strip_dot(modified_name);
+                    }
 
                     ldns_rdf *rdf_name = NULL;
                     if (ldns_str2rdf_dname(&rdf_name, modified_name) == LDNS_STATUS_OK && rdf_name) {
@@ -233,12 +260,12 @@ void process_dns_query(int sockfd, const char *buf, ssize_t len,
                             uint8_t rcode = ldns_pkt_get_rcode(forward_resp);
                             const char* rcode_str = "UNKNOWN";
                             switch(rcode) {
-                                case LDNS_RCODE_NOERROR: rcode_str = "NOERROR"; break;
-                                case LDNS_RCODE_FORMERR: rcode_str = "FORMERR"; break;
+                                case LDNS_RCODE_NOERROR:  rcode_str = "NOERROR";  break;
+                                case LDNS_RCODE_FORMERR:  rcode_str = "FORMERR";  break;
                                 case LDNS_RCODE_SERVFAIL: rcode_str = "SERVFAIL"; break;
                                 case LDNS_RCODE_NXDOMAIN: rcode_str = "NXDOMAIN"; break;
-                                case LDNS_RCODE_NOTIMPL: rcode_str = "NOTIMPL"; break;
-                                case LDNS_RCODE_REFUSED: rcode_str = "REFUSED"; break;
+                                case LDNS_RCODE_NOTIMPL:  rcode_str = "NOTIMPL";  break;
+                                case LDNS_RCODE_REFUSED:  rcode_str = "REFUSED";  break;
                             }
                             log_msg(LOG_DEBUG, "Forward DNS response: %s (%d answers)", 
                                     rcode_str,

@@ -1,6 +1,7 @@
 #ifndef LOGGING_H
 #define LOGGING_H
-#include <stdarg.h>
+
+#include <stdio.h>  // for va_list
 
 typedef enum {
     LOG_DEBUG = 0,

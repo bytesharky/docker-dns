@@ -1,10 +1,11 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <errno.h>
-#include <limits.h>
-#include "logging.h"
 #include "config.h"
+#include "helper.h"   // for print_help, get_option_type, OPT_CONTAINER, OPT...
+#include "logging.h"  // for log_msg, LOG_FATAL, parse_log_level, log_level
+#include <errno.h>    // for errno, ERANGE
+#include <limits.h>   // for INT_MAX, INT_MIN, LONG_MAX, LONG_MIN
+#include <stdio.h>    // for fprintf, printf, stderr
+#include <stdlib.h>   // for exit, free, getenv, malloc, strtol
+#include <string.h>   // for strncpy, memmove, strlen
 
 int max_hops = MAX_HOPS_DEFAULT;
 int num_workers = NUM_WORKERS_DEFAULT;
@@ -17,7 +18,7 @@ char gateway_name[64] = {0};
 char suffix_domain[64] = {0};
 
 // 初始化配置(环境变量)
-void init_config_env() {
+void init_config_env(void) {
 
     // 从环境变量读取
     log_level = parse_log_level(getenv(LOG_LEVEL_ENV), LOG_INFO);

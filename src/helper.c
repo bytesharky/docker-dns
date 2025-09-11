@@ -1,7 +1,7 @@
-#include <stdio.h>
-#include <string.h>
+#include "config.h"  // for CONTAINER_DEFAULT, FORWARD_DNS_DEFAULT, GATEWAY_...
 #include "helper.h"
-#include "config.h"
+#include <stdio.h>   // for printf, NULL
+#include <string.h>  // for strcmp, strlen
 
 // 打印帮助信息
 void print_help(const char *progname) {

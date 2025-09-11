@@ -1,8 +1,9 @@
 #ifndef QUEUE_H
 #define QUEUE_H
-#include <pthread.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
+#include <netinet/in.h>  // for sockaddr_in
+#include <pthread.h>     // for pthread_cond_t, pthread_mutex_t
+#include <stdint.h>      // for uint8_t
+#include <sys/socket.h>  // for size_t, socklen_t
 
 #define BUF_SIZE 4096
 #define QUEUE_SIZE 1024
@@ -20,5 +21,5 @@ extern pthread_mutex_t q_mutex;
 extern pthread_cond_t q_cond;
 
 void enqueue_request(dns_request_t *req);
-int dequeue_request(dns_request_t *req);
+void dequeue_request(dns_request_t *req);
 #endif

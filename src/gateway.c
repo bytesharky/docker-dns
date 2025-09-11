@@ -1,8 +1,16 @@
-#include <arpa/inet.h>
+
+#include "config.h"         // for gateway_name, keep_suffix, suffix_domain
+#include "dns.h"            // for strip_suffix
 #include "gateway.h"
-#include "config.h"
-#include "logging.h"
-#include "dns.h"
+#include "logging.h"        // for log_msg, LOG_DEBUG, LOG_ERROR, LOG_WARN
+#include <arpa/inet.h>      // for inet_ntoa
+#include <stdio.h>          // for fclose, NULL, snprintf, fgets, fopen, fscanf
+#include <stdlib.h>         // for free
+#include <string.h>         // for strdup, strcspn, strlen
+#include <strings.h>        // for strcasecmp, size_t
+// #include <ldns/error.h>     // for ldns_get_errorstr_by_id, ldns_enum_status
+// #include <ldns/host2str.h>  // for ldns_rr_type2str, ldns_rdf2str
+#include <ldns/ldns.h>
 
 // 检查是否是网关域名
 int is_gateway_domain(const char *name) {
@@ -13,10 +21,7 @@ int is_gateway_domain(const char *name) {
     if (!temp_name) return 0;
     
     // 先移除尾部的点（FQDN）
-    if (len > 0 && temp_name[len-1] == '.') {
-        temp_name[len-1] = '\0';
-        len--;
-    }
+    strip_dot(temp_name);
 
     // 构建预期的网关域名格式
     char expected_gateway[512];
@@ -31,7 +36,7 @@ int is_gateway_domain(const char *name) {
 }
 
 // 获取网关IP地址
-int resolve_gateway_ip() {
+int resolve_gateway_ip(void) {
     log_msg(LOG_DEBUG, "Resolving gateway IP from /proc/net/route");
     
     FILE *f = fopen("/proc/net/route", "r");
