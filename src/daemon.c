@@ -1,10 +1,8 @@
-#include <unistd.h>
-#include <stdlib.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include "logging.h"
 #include "daemon.h"
+#include <fcntl.h>     // for open, O_RDONLY, O_RDWR, O_WRONLY, pid_t
+#include <stdlib.h>    // for exit, EXIT_FAILURE, EXIT_SUCCESS
+#include <sys/stat.h>  // for umask
+#include <unistd.h>    // for close, fork, chdir, setsid, STDERR_FILENO, STD...
 
 // 守护进程
 void daemonize(void) {
@@ -20,7 +18,10 @@ void daemonize(void) {
     close(STDIN_FILENO);
     close(STDOUT_FILENO);
     close(STDERR_FILENO);
-    open("/dev/null", O_RDONLY);
-    open("/dev/null", O_WRONLY);
-    open("/dev/null", O_RDWR);
+    int fd = open("/dev/null", O_RDWR);
+    dup2(fd, STDIN_FILENO);
+    dup2(fd, STDOUT_FILENO);
+    dup2(fd, STDERR_FILENO);
+    if (fd > 2) close(fd);
+
 }

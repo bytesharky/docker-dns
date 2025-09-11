@@ -1,17 +1,19 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <pthread.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include "config.h"
-#include "logging.h"
-#include "daemon.h"
-#include "sigterm.h"
-#include "queue.h"
-#include "dns.h"
-#include "gateway.h"
-
+#include "config.h"      // for init_config_argc, init_config_env, listen_port
+#include "daemon.h"      // for daemonize
+#include "dns.h"         // for process_dns_query, test_forward_dns
+#include "gateway.h"     // for resolve_gateway_ip
+#include "logging.h"     // for log_msg, LOG_INFO, LOG_FATAL, LOG_WARN, log_...
+#include "queue.h"       // for dns_request_t, dequeue_request, enqueue_request
+#include "sigterm.h"     // for setup_signal_handlers, stop
+#include <arpa/inet.h>   // for inet_ntoa, htons
+#include <errno.h>       // for errno, EAGAIN, EINTR, EWOULDBLOCK
+#include <netinet/in.h>  // for sockaddr_in, in_addr, INADDR_ANY
+#include <pthread.h>     // for pthread_create, pthread_detach, pthread_t
+#include <stdio.h>       // for perror, ssize_t
+#include <string.h>      // for strerror
+#include <sys/socket.h>  // for setsockopt, bind, recvfrom, socket, AF_INET
+#include <sys/time.h>    // for timeval
+#include <unistd.h>      // for close, NULL
 
 struct in_addr gateway_addr;                // 存储网关IP地址
 

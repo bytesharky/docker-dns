@@ -1,9 +1,12 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <time.h>
-#include "config.h"
+
+#include "config.h"   // for str2int
 #include "logging.h"
+#include <stdarg.h>   // for va_end, va_start
+#include <stdio.h>    // for printf, fflush, vprintf, NULL, stdout
+#include <stdlib.h>   // for free
+#include <string.h>   // for strlen
+#include <strings.h>  // for strcasecmp
+#include <time.h>     // for ctime, time, time_t
 
 log_level_t log_level = LOG_INFO;
 const char *level_str[] = {"DEBUG", "INFO", "WARN", "ERROR", "FATAL"};

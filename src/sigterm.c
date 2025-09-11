@@ -1,7 +1,7 @@
-#include <signal.h>
-#include <stdlib.h>
-#include "logging.h"
+#include "logging.h"  // for log_msg, LOG_DEBUG
 #include "sigterm.h"
+#include <signal.h>   // for signal, SIGINT, SIGTERM
+#include <stdlib.h>   // for exit
 
 volatile sig_atomic_t stop = 0;
 

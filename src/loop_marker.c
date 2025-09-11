@@ -1,5 +1,9 @@
+#include "logging.h"    // for log_msg, LOG_ERROR, LOG_DEBUG
 #include "loop_marker.h"
-#include "logging.h"
+#include <arpa/inet.h>  // for htons, ntohs
+#include <string.h>     // for size_t, memcpy
+// #include <ldns/edns.h>  // for ldns_edns_deep_free, ldns_edns_get_code, ldns...
+#include <ldns/ldns.h>
 
 // 添加或更新环路检测标识
 void add_loop_marker(ldns_pkt *pkt, uint16_t hop_count)

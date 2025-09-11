@@ -1,8 +1,9 @@
 #ifndef LOOP_MARKER_H
 #define LOOP_MARKER_H
-#include <ldns/ldns.h>
-#include <ldns/edns.h>
-#include <arpa/inet.h>
+
+#include <stdint.h>       // for uint16_t
+// #include <ldns/packet.h>  // for ldns_pkt
+#include <ldns/ldns.h> 
 
 #define MY_OPTION_CODE 65001
 #define HOP_COUNT_DATA_LEN 2
