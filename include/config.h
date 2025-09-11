@@ -2,7 +2,7 @@
 #define CONFIG_H
 #include <stddef.h>  // for size_t
 
-#define VERSION "1.1.0"
+#define VERSION "1.1.1"
 #define LISTEN_PORT_ENV "LISTEN_PORT"
 #define FORWARD_DNS_ENV "FORWARD_DNS"
 #define GATEWAY_ENV "GATEWAY_NAME"
