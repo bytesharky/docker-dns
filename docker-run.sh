@@ -160,7 +160,6 @@ echo "----------------------------------------"
 # 确认继续
 while true; do
     read -p "$LANG_CONFIRM_DEPLOY? (Y/N) " yn
-    yn=${yn}
     case $yn in
         [Yy]* ) break;;
         [Nn]* ) exit;;

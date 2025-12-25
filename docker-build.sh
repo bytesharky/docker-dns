@@ -46,7 +46,6 @@ else
     exit 1
 fi
 
-
 cd "$SCRIPT_DIR" || exit
 
 echo "$LANG_BUILDING_IMAGE"
@@ -54,6 +53,24 @@ echo "$LANG_BUILDING_IMAGE"
 rm -f Dockerfile
 
 cp Dockerfile-${TAG} Dockerfile
+
+if [ "$LANGUAGE" = "zh" ]; then
+    while true; do
+        read -p "是否使用国内镜像源? (Y/N) " MIRRORS
+        case $MIRRORS in
+            [Yy] )
+                sed -i 's/^# MIRRORS //g' ./Dockerfile
+                break
+                ;;
+            [Nn] ) 
+                break
+                ;;
+            * ) 
+                echo "输入无效，请输入 Y/y 或 N/n！"
+                ;;
+        esac
+    done
+fi
 
 docker build $2 -t ${IMAGE}:${TAG} .
 
