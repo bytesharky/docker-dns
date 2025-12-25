@@ -1,8 +1,32 @@
-# Docker DNS Forwarder: Resolve Container Names to IPs on Host Machine  
+# Docker DNS Forwarder
 
-In Docker, containers can typically access each other by their container names (relying on Docker's built-in DNS at `127.0.0.11`). However, the **host machine cannot resolve container names by default**.  
+**Resolve Container Names to IPs from Host Machine**
 
-This tool —— the **Docker DNS Forwarder** , solves this problem: it allows the host to access container services directly using domain names in the format `container-name.custom-suffix`, **no port mapping required, no hosts file modification needed**.  
+In a Docker environment, containers can usually access each other directly by their container names (relying on Docker's built-in DNS service 127.0.0.11). However, the host machine cannot resolve container names by default, which brings inconvenience to accessing containers from the host.
+
+Traditional solutions all have obvious drawbacks:
+
+- Port Mapping: Requires manual binding of container ports to the host, which is prone to port clutter and difficulty in memorization;
+
+- Fixed Container IP: Lacks flexibility in IP management; reconfiguration is needed when scaling or adjusting containers;
+
+- Monitoring Docker sock File and Maintaining hosts: Requires root privileges, posing potential security risks, and the configuration and maintenance are cumbersome;
+
+- Deploying Local DNS Service: Redundant in functions and bloated in size; deploying it merely for resolving container names is an overkill.
+
+**Docker DNS Forwarder is specifically designed to address the above pain points:**
+
+It is a lightweight DNS forwarder running in a Docker container based on the scratch image, with an image size of only 1.5MB. Its core logic is "precise forwarding, refusal for non-matching requests" — it does not provide an independent DNS service, but only forwards domain name resolution requests matching the pattern "container name + custom suffix" to Docker's built-in DNS (127.0.0.11). All other domain name requests are rejected (return REFUSED), and the host machine will automatically switch to public DNS for resolution, which does not affect normal internet access at all.
+
+**Extremely Simple Usage**
+
+Only two steps are required to enable the host to resolve container names:
+
+1. Map port 53 of the forwarder container to the host machine;
+
+2. Set the preferred DNS address of the host machine to127.0.0.1.
+
+After that, you can directly access containers from the host using the domain name format container-name.custom-suffix, without the need for tedious operations such as port mapping, fixing container IPs, or modifying the hosts file.
 
 ## Read this in other languages
 
