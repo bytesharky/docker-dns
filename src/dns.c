@@ -245,84 +245,107 @@ void process_dns_query(int sockfd, const uint8_t *buf, ssize_t len,
                         add_loop_marker(clone_pkt, hops + 1);
                         log_msg(LOG_DEBUG, "Add loop marker hops -> %d", hops);
 
-                        log_msg(LOG_INFO, "Forwarding %s query for '%s' from %s to %s",
-                            ldns_rr_type2str(ldns_rr_get_type(qrr)),
-                            modified_name,
-                            inet_ntoa(client->sin_addr),
-                            forward_dns);
+                        int reqType = ldns_rr_get_type(qrr);
+                        // Type A:1 or Type AAAA: 28
+                        if (reqType != 1 && reqType != 28) {
+                            log_msg(LOG_INFO, "Response %s(%d) query for '%s' from %s",
+                                ldns_rr_type2str(ldns_rr_get_type(qrr)),
+                                ldns_rr_get_type(qrr),
+                                modified_name,
+                                "NOERROR"
+                                );
 
-                        ldns_pkt *forward_resp = NULL;
-                        ldns_status status = ldns_resolver_send_pkt(&forward_resp, fresh_resolver, clone_pkt);
-                        // ldns_pkt *forward_resp = ldns_resolver_query(fresh_resolver, rdf_name, 
-                        //                             ldns_rr_get_type(qrr), LDNS_RR_CLASS_IN, LDNS_RD);
-                        
-                        if (status == LDNS_STATUS_OK && forward_resp) {
-                            uint8_t rcode = ldns_pkt_get_rcode(forward_resp);
-                            const char* rcode_str = "UNKNOWN";
-                            switch(rcode) {
-                                case LDNS_RCODE_NOERROR:  rcode_str = "NOERROR";  break;
-                                case LDNS_RCODE_FORMERR:  rcode_str = "FORMERR";  break;
-                                case LDNS_RCODE_SERVFAIL: rcode_str = "SERVFAIL"; break;
-                                case LDNS_RCODE_NXDOMAIN: rcode_str = "NXDOMAIN"; break;
-                                case LDNS_RCODE_NOTIMPL:  rcode_str = "NOTIMPL";  break;
-                                case LDNS_RCODE_REFUSED:  rcode_str = "REFUSED";  break;
-                            }
-                            log_msg(LOG_DEBUG, "Forward DNS response: %s (%d answers)", 
-                                    rcode_str,
-                                    ldns_rr_list_rr_count(ldns_pkt_answer(forward_resp)));
-                            
-                            // 创建新的响应包，保持原始Question Section
+                            // 返回空响应
+                            log_msg(LOG_DEBUG, "Creating NOERROR response");
                             resp_pkt = ldns_pkt_new();
                             if (resp_pkt) {
-                                // 复制基本属性
                                 ldns_pkt_set_id(resp_pkt, ldns_pkt_id(query_pkt));
                                 ldns_pkt_set_qr(resp_pkt, 1);
-                                ldns_pkt_set_aa(resp_pkt, ldns_pkt_aa(forward_resp));
-                                ldns_pkt_set_tc(resp_pkt, ldns_pkt_tc(forward_resp));
-                                ldns_pkt_set_rd(resp_pkt, ldns_pkt_rd(forward_resp));
-                                ldns_pkt_set_ra(resp_pkt, ldns_pkt_ra(forward_resp));
-                                ldns_pkt_set_rcode(resp_pkt, ldns_pkt_get_rcode(forward_resp));
-                                
-                                // 使用原始查询的Question Section
+                                ldns_pkt_set_aa(resp_pkt, 1);
+                                ldns_pkt_set_rcode(resp_pkt, LDNS_RCODE_NOERROR);
                                 ldns_pkt_push_rr(resp_pkt, LDNS_SECTION_QUESTION, ldns_rr_clone(qrr));
+                            }
+                        } else {
+                            // 转发DNS请求
+                            log_msg(LOG_INFO, "Forwarding %s(%d) query for '%s' from %s to %s",
+                                ldns_rr_type2str(ldns_rr_get_type(qrr)),
+                                ldns_rr_get_type(qrr),
+                                modified_name,
+                                inet_ntoa(client->sin_addr),
+                                forward_dns);
+
+                            ldns_pkt *forward_resp = NULL;
+                            ldns_status status = ldns_resolver_send_pkt(&forward_resp, fresh_resolver, clone_pkt);
+                            // ldns_pkt *forward_resp = ldns_resolver_query(fresh_resolver, rdf_name, 
+                            //                             ldns_rr_get_type(qrr), LDNS_RR_CLASS_IN, LDNS_RD);
+                            
+                            if (status == LDNS_STATUS_OK && forward_resp) {
+                                uint8_t rcode = ldns_pkt_get_rcode(forward_resp);
+                                const char* rcode_str = "UNKNOWN";
+                                switch(rcode) {
+                                    case LDNS_RCODE_NOERROR:  rcode_str = "NOERROR";  break;
+                                    case LDNS_RCODE_FORMERR:  rcode_str = "FORMERR";  break;
+                                    case LDNS_RCODE_SERVFAIL: rcode_str = "SERVFAIL"; break;
+                                    case LDNS_RCODE_NXDOMAIN: rcode_str = "NXDOMAIN"; break;
+                                    case LDNS_RCODE_NOTIMPL:  rcode_str = "NOTIMPL";  break;
+                                    case LDNS_RCODE_REFUSED:  rcode_str = "REFUSED";  break;
+                                }
+                                log_msg(LOG_DEBUG, "Forward DNS response: %s (%d answers)", 
+                                        rcode_str,
+                                        ldns_rr_list_rr_count(ldns_pkt_answer(forward_resp)));
                                 
-                                // 复制Answer Section中的记录，但需要修改域名
-                                ldns_rr_list *answers = ldns_pkt_answer(forward_resp);
-                                if (answers) {
-                                    for (size_t i = 0; i < ldns_rr_list_rr_count(answers); i++) {
-                                        ldns_rr *answer_rr = ldns_rr_clone(ldns_rr_list_rr(answers, i));
-                                        if (answer_rr) {
-                                            // 将答案记录的域名改回原始域名
-                                            ldns_rr_set_owner(answer_rr, ldns_rdf_clone(qname));
-                                            ldns_pkt_push_rr(resp_pkt, LDNS_SECTION_ANSWER, answer_rr);
+                                // 创建新的响应包，保持原始Question Section
+                                resp_pkt = ldns_pkt_new();
+                                if (resp_pkt) {
+                                    // 复制基本属性
+                                    ldns_pkt_set_id(resp_pkt, ldns_pkt_id(query_pkt));
+                                    ldns_pkt_set_qr(resp_pkt, 1);
+                                    ldns_pkt_set_aa(resp_pkt, ldns_pkt_aa(forward_resp));
+                                    ldns_pkt_set_tc(resp_pkt, ldns_pkt_tc(forward_resp));
+                                    ldns_pkt_set_rd(resp_pkt, ldns_pkt_rd(forward_resp));
+                                    ldns_pkt_set_ra(resp_pkt, ldns_pkt_ra(forward_resp));
+                                    ldns_pkt_set_rcode(resp_pkt, ldns_pkt_get_rcode(forward_resp));
+                                    
+                                    // 使用原始查询的Question Section
+                                    ldns_pkt_push_rr(resp_pkt, LDNS_SECTION_QUESTION, ldns_rr_clone(qrr));
+                                    
+                                    // 复制Answer Section中的记录，但需要修改域名
+                                    ldns_rr_list *answers = ldns_pkt_answer(forward_resp);
+                                    if (answers) {
+                                        for (size_t i = 0; i < ldns_rr_list_rr_count(answers); i++) {
+                                            ldns_rr *answer_rr = ldns_rr_clone(ldns_rr_list_rr(answers, i));
+                                            if (answer_rr) {
+                                                // 将答案记录的域名改回原始域名
+                                                ldns_rr_set_owner(answer_rr, ldns_rdf_clone(qname));
+                                                ldns_pkt_push_rr(resp_pkt, LDNS_SECTION_ANSWER, answer_rr);
+                                            }
                                         }
                                     }
-                                }
-                                
-                                // 复制Authority Section
-                                ldns_rr_list *authority = ldns_pkt_authority(forward_resp);
-                                if (authority) {
-                                    for (size_t i = 0; i < ldns_rr_list_rr_count(authority); i++) {
-                                        ldns_pkt_push_rr(resp_pkt, LDNS_SECTION_AUTHORITY, 
-                                                        ldns_rr_clone(ldns_rr_list_rr(authority, i)));
+                                    
+                                    // 复制Authority Section
+                                    ldns_rr_list *authority = ldns_pkt_authority(forward_resp);
+                                    if (authority) {
+                                        for (size_t i = 0; i < ldns_rr_list_rr_count(authority); i++) {
+                                            ldns_pkt_push_rr(resp_pkt, LDNS_SECTION_AUTHORITY, 
+                                                            ldns_rr_clone(ldns_rr_list_rr(authority, i)));
+                                        }
                                     }
-                                }
-                                
-                                // 复制Additional Section
-                                ldns_rr_list *additional = ldns_pkt_additional(forward_resp);
-                                if (additional) {
-                                    for (size_t i = 0; i < ldns_rr_list_rr_count(additional); i++) {
-                                        ldns_pkt_push_rr(resp_pkt, LDNS_SECTION_ADDITIONAL, 
-                                                        ldns_rr_clone(ldns_rr_list_rr(additional, i)));
+                                    
+                                    // 复制Additional Section
+                                    ldns_rr_list *additional = ldns_pkt_additional(forward_resp);
+                                    if (additional) {
+                                        for (size_t i = 0; i < ldns_rr_list_rr_count(additional); i++) {
+                                            ldns_pkt_push_rr(resp_pkt, LDNS_SECTION_ADDITIONAL, 
+                                                            ldns_rr_clone(ldns_rr_list_rr(additional, i)));
+                                        }
                                     }
+                                    
+                                    log_msg(LOG_DEBUG, "Created response with original question section");
                                 }
                                 
-                                log_msg(LOG_DEBUG, "Created response with original question section");
-                            }
-                            
-                            ldns_pkt_free(forward_resp);
-                        } else {
-                            log_msg(LOG_DEBUG, "No response from forward DNS server for '%s' (this is expected for non-existent record)", modified_name);
+                                ldns_pkt_free(forward_resp);
+                            } else {
+                                log_msg(LOG_DEBUG, "No response from forward DNS server for '%s' (this is expected for non-existent record)", modified_name);
                         }
                         
                         // 释放为此查询创建的resolver
