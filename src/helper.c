@@ -42,7 +42,7 @@ void print_version(void){
     printf("built by gcc %s\n", __VERSION__);
     printf("built by OS %s, %s\n", OS_NAME, ARCH_NAME);
     printf("built with ldns %s\n", LDNS_VERSION);
-    printf("built on: %s %s\n", __DATE__, __TIME__);
+    printf("built on: %s %s %s\n", __TIMEZONE_NAME__, __DATE__, __TIME__);
     printf("\n");
 }
 

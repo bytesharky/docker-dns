@@ -40,7 +40,13 @@ int main(int argc, char *argv[]) {
 
     setup_signal_handlers();
 
-    log_msg(LOG_INFO, "Starting Sharky DNS forwarder (log level=%d->%s)", log_level, level_str[log_level]);
+    log_msg(LOG_INFO, "Welcome to use Sharky DNS forwarder");
+    
+    log_msg(LOG_INFO, "Version: %s. ldns version: %s", VERSION, LDNS_VERSION);
+
+    log_msg(LOG_INFO, "Starting Sharky DNS forwarder...");
+
+    log_msg(LOG_INFO, "Set log level to %d: %s", log_level, level_str[log_level]);
 
     log_msg(LOG_INFO, "Set container name to %s", container_name);
         
@@ -113,17 +119,25 @@ int main(int argc, char *argv[]) {
 
         ssize_t n = recvfrom(sockfd, req.data, sizeof(req.data), 0, 
                             (struct sockaddr*)&req.client_addr, &req.client_len);
-        if (n < 0) {
+        if (n <= 0) {
             if (errno == EINTR ||
                 errno == EAGAIN || 
                 errno == EWOULDBLOCK) continue;
             log_msg(LOG_ERROR, "Failed to receive data: %s", strerror(errno));
             break;
         }
+
+        req.len = n;
         enqueue_request(&req);
+
+        log_msg(LOG_DEBUG, "Received DNS query from %s:%d (%zd bytes)", 
+            inet_ntoa(req.client_addr.sin_addr),  // 客户端IP字符串
+            ntohs(req.client_addr.sin_port),      // 客户端端口（网络字节序转主机序）
+            n);                                   // 接收的字节数);
     }
 
     log_msg(LOG_INFO, "Shutting down gracefully");
+    log_cleanup();
     close(sockfd);
     return 0;
 }

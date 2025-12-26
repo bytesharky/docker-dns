@@ -6,13 +6,18 @@ FROM alpine:3.23 AS alpine-base
 # 使用国内源
 # MIRRORS RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.tencent.com/g' /etc/apk/repositories && apk update
 
+# 设置时区
+ARG HOST_TZ=UTC
+ENV TZ=$HOST_TZ
+
 # ========================
 # Stage 1: Build
 # ========================
 FROM alpine-base AS builder
 
 # 安装编译工具和 ldns
-RUN apk add --no-cache build-base ldns-dev
+RUN apk add --no-cache build-base ldns-dev tzdata \
+    && rm -rf /var/cache/apk/*
 
 # 复制源代码
 WORKDIR /app
@@ -20,7 +25,8 @@ COPY /src ./src
 COPY /include ./include
 
 # 编译
-RUN gcc -O2 -s -o ./docker-dns ./src/*.c \
+RUN gcc -D__TIMEZONE_NAME__='"'"$(date +%Z)"'"' \
+    -O2 -s -o ./docker-dns ./src/*.c \
     -I./include -lldns
 
 # ========================
@@ -29,7 +35,7 @@ RUN gcc -O2 -s -o ./docker-dns ./src/*.c \
 FROM alpine-base
 
 # 安装 ldns
-RUN apk add --no-cache ldns \
+RUN apk add --no-cache ldns tzdata \
     && rm -rf /var/cache/apk/*
 
 # 拷贝二进制到运行镜像
@@ -39,6 +45,6 @@ COPY --from=builder /app/docker-dns /docker-dns
 EXPOSE 53/udp
 
 # 设置容器入口
-ENTRYPOINT ["./docker-dns"]
+ENTRYPOINT ["/docker-dns"]
 
 CMD ["-f"]

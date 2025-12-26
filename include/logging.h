@@ -16,6 +16,7 @@ extern const char *level_str[];
 
 void vlog_msg(log_level_t level, const char *format, va_list args);
 void log_msg(log_level_t level, const char *format, ...);
+void log_cleanup();
 int parse_log_level(const char *level_str, int default_val);
 
 #endif

@@ -6,13 +6,19 @@ FROM alpine:3.23 AS builder
 # 使用国内源
 # MIRRORS RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.tencent.com/g' /etc/apk/repositories && apk update
 
+# 设置时区
+ARG HOST_TZ=UTC
+ENV TZ=$HOST_TZ
+
 # 安装构建工具和静态依赖
 RUN apk add --no-cache \
-      build-base wget upx\
-      openssl-dev openssl-libs-static \
-      libevent-dev libevent-static \
-      zlib-dev zlib-static \
-      ldns-dev ldns-static
+    build-base wget upx\
+    openssl-dev openssl-libs-static \
+    libevent-dev libevent-static \
+    zlib-dev zlib-static \
+    ldns-dev ldns-static \
+    tzdata \
+    && rm -rf /var/cache/apk/*
 
 # 已经在alpine官方提交PR增加ldns静态版，alpine:3.23 以上无需在自行编译
 # # 下载ldns发行版
@@ -36,7 +42,8 @@ COPY /include ./include
 RUN sed -i -E 's/^#define[[:space:]]+VERSION[[:space:]]+"([^"]+)"/#define VERSION "\1(static)"/' ./include/config.h
 
 # 编译成静态二进制
-RUN gcc -static -O2 -s -o ./docker-dns ./src/*.c \
+RUN gcc -D__TIMEZONE_NAME__='"'"$(date +%Z)"'"' \
+    -static -O2 -s -o ./docker-dns ./src/*.c \
     -I./include -lldns -lssl -lcrypto -levent -lz -lpthread
 
 RUN upx --best --lzma ./docker-dns

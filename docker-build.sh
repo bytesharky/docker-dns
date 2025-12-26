@@ -6,6 +6,21 @@ echo "请选择语言 / Please select language:"
 echo "1) 中文"
 echo "2) English"
 
+# 获取主机系统时区名称
+get_system_timezone() {
+    if command -v timedatectl >/dev/null 2>&1; then
+        timedatectl show -p Timezone --value
+    elif [ -f /etc/timezone ]; then
+        cat /etc/timezone
+    elif [ -L /etc/localtime ]; then
+        readlink /etc/localtime | sed 's|/usr/share/zoneinfo/||'
+    else
+        echo "UTC"
+    fi
+}
+
+HOST_TZ=$(get_system_timezone)
+
 # 根据选择设置LANGUAGE环境变量
 while true; do
     read -p "> (1/2): " lang_choice
@@ -72,7 +87,9 @@ if [ "$LANGUAGE" = "zh" ]; then
     done
 fi
 
-docker build $2 -t ${IMAGE}:${TAG} .
+echo TZ=$HOST_TZ
+
+docker build --build-arg HOST_TZ=$HOST_TZ $2 -t ${IMAGE}:${TAG} .
 
 echo "$LANG_BUILD_COMPLETE"
 

@@ -7,14 +7,19 @@
 #include <string.h>   // for strlen
 #include <strings.h>  // for strcasecmp
 #include <time.h>     // for ctime, time, time_t
+#include <pthread.h>  // for pthread_mutex_lock
 
 log_level_t log_level = LOG_INFO;
 const char *level_str[] = {"DEBUG", "INFO", "WARN", "ERROR", "FATAL"};
+// 定义全局互斥锁，保护日志输出
+static pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // 输出日志
 void vlog_msg(log_level_t level, const char *format, va_list args) {
     if (level < log_level) return;
 
+    // 加互斥锁，确保整个日志打印过程是原子操作
+    pthread_mutex_lock(&log_mutex);
     time_t now;
     time(&now);
     char *timestr = ctime(&now);
@@ -24,6 +29,8 @@ void vlog_msg(log_level_t level, const char *format, va_list args) {
     vprintf(format, args);
     printf("\n");
     fflush(stdout);
+    // 释放互斥锁，让其他线程可以打印日志
+    pthread_mutex_unlock(&log_mutex);
 }
 
 // 输出日志
@@ -54,4 +61,9 @@ int parse_log_level(const char *level_str, int default_val) {
     }
 
     return default_val;
+}
+
+// 程序退出前建议销毁锁
+void log_cleanup() {
+    pthread_mutex_destroy(&log_mutex);
 }
