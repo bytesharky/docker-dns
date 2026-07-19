@@ -29,13 +29,9 @@ void init_config_env(void) {
     read_env(FORWARD_DNS_ENV, FORWARD_DNS_DEFAULT, forward_dns, sizeof(forward_dns));
 
     // 获取主机名(容器短ID)
-    if (gethostname(container_name, sizeof(container_name)) == 0)
+    if (gethostname(container_name, sizeof(container_name)) != 0)
     {
-        log_msg(LOG_INFO, "Container short ID: %s", container_name);
-    }
-    else
-    {
-        log_msg(LOG_ERROR, "Error: Get container short ID failed");
+        log_msg(LOG_ERROR, "Error: Get server hostname failed");
     }
 
 

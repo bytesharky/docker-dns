@@ -59,6 +59,10 @@ COPY --from=builder /app/docker-dns /docker-dns
 # 暴露 53/udp 端口
 EXPOSE 53/udp
 
+# 健康检查
+HEALTHCHECK --interval=10s --timeout=3s --start-period=15s \
+  CMD ["/docker-dns", "--healthy"]
+
 # 设置容器入口
 ENTRYPOINT ["/docker-dns"]
 

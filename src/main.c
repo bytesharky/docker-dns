@@ -47,7 +47,10 @@ int main(int argc, char *argv[]) {
     log_msg(LOG_INFO, "Starting Sharky DNS forwarder...");
 
     log_msg(LOG_INFO, "Set log level to %d: %s", log_level, level_str[log_level]);
-        
+
+    log_msg(LOG_INFO, "Server hostname: %s", container_name);
+
+
     if (!test_forward_dns()) {
         log_msg(LOG_WARN, "Forward DNS server may not be available");
     } else {
