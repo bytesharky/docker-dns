@@ -1,11 +1,6 @@
 #!/bin/sh
 set -e
 
-# 语言选择功能
-echo "请选择语言 / Please select language:"
-echo "1) 中文"
-echo "2) English"
-
 # 获取主机系统时区名称
 get_system_timezone() {
     if command -v timedatectl >/dev/null 2>&1; then
@@ -21,36 +16,63 @@ get_system_timezone() {
 
 HOST_TZ=$(get_system_timezone)
 
-# 根据选择设置LANGUAGE环境变量
-while true; do
-    read -p "> (1/2): " lang_choice
-    case $lang_choice in
-        1)
+if [ -z "$LANGUAGE" ]; then
+    # 语言选择功能
+    echo "请选择语言 / Please select language:"
+    echo "1) 中文"
+    echo "2) English"
+
+    # 根据选择设置LANGUAGE环境变量
+    while true; do
+        read -p "> (1/2): " lang_choice
+        case $lang_choice in
+            1)
+                export LANGUAGE="zh"
+                break
+                ;;
+            2)
+                export LANGUAGE="en"
+                break
+                ;;
+            *)
+                echo "无效选择 / Invalid choice"
+                ;;
+        esac
+    done
+else
+    case "$LANGUAGE" in
+        *zh*|*CN*)
             export LANGUAGE="zh"
-            break
-            ;;
-        2)
-            export LANGUAGE="en"
-            break
             ;;
         *)
-            echo "无效选择 / Invalid choice"
+            export LANGUAGE="en"
             ;;
     esac
-done
+fi
 
 # 加载语言文件
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 LANG_DIR="$SCRIPT_DIR/langs"
 
-# 检查语言文件是否存在，不存在则使用英文（警告信息用英文）
-if [ -f "$LANG_DIR/$LANGUAGE.sh" ]; then
-    . "$LANG_DIR/$LANGUAGE.sh"
-else
-    echo "警告：未找到语言文件 $LANG_DIR/$LANGUAGE.sh，使用英文默认值"
-    echo "Warning: Language file $LANG_DIR/$LANGUAGE.sh not found, using English defaults"
-    . "$LANG_DIR/en.sh"
-fi
+load_language() {
+    local lang_file="$LANG_DIR/${1}.sh"
+    
+    if [ -f "$lang_file" ]; then
+        # shellcheck source=/dev/null
+        . "$lang_file"
+        echo "Loaded language file: $lang_file" >&2
+    else
+        echo "警告：未找到语言文件 $ang_file，使用英文默认值"
+        echo "Warning: Language file $lang_file not found, using English defaults"
+        . "$LANG_DIR/en.sh"
+    fi
+}
+
+# 创建语言目录（如果不存在）
+mkdir -p "$LANG_DIR"
+
+# 加载语言文件
+load_language "$LANGUAGE"
 
 IMAGE="docker-dns"
 

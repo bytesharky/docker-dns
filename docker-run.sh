@@ -4,16 +4,44 @@
 # 国际化设置
 # ========================
 
-# 默认语言
-DEFAULT_LANG="en"
+if [ -z "$LANGUAGE" ]; then
+    # 语言选择功能
+    echo "请选择语言 / Please select language:"
+    echo "1) 中文"
+    echo "2) English"
 
-# 从环境变量获取语言设置，默认为英文
-LANGUAGE="${LANGUAGE:-$DEFAULT_LANG}"
+    # 根据选择设置LANGUAGE环境变量
+    while true; do
+        read -p "> (1/2): " lang_choice
+        case $lang_choice in
+            1)
+                export LANGUAGE="zh"
+                break
+                ;;
+            2)
+                export LANGUAGE="en"
+                break
+                ;;
+            *)
+                echo "无效选择 / Invalid choice"
+                ;;
+        esac
+    done
+else
+    case "$LANGUAGE" in
+        *zh*|*CN*)
+            export LANGUAGE="zh"
+            ;;
+        *)
+            export LANGUAGE="en"
+            ;;
+    esac
+fi
 
-# 语言文件目录
-LANG_DIR="./langs"
+# 加载语言文件
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+LANG_DIR="$SCRIPT_DIR/langs"
 
-# 加载对应的语言文件
 load_language() {
     local lang_file="$LANG_DIR/${1}.sh"
     
@@ -22,8 +50,8 @@ load_language() {
         . "$lang_file"
         echo "Loaded language file: $lang_file" >&2
     else
-        echo "Language file $lang_file not found, using default (en)" >&2
-        # shellcheck source=/dev/null
+        echo "警告：未找到语言文件 $ang_file，使用英文默认值"
+        echo "Warning: Language file $lang_file not found, using English defaults"
         . "$LANG_DIR/en.sh"
     fi
 }
