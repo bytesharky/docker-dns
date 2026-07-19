@@ -47,12 +47,12 @@ int main(int argc, char *argv[]) {
     log_msg(LOG_INFO, "Starting Sharky DNS forwarder...");
 
     log_msg(LOG_INFO, "Set log level to %d: %s", log_level, level_str[log_level]);
-
-    log_msg(LOG_INFO, "Set container name to %s", container_name);
         
     if (!test_forward_dns()) {
         log_msg(LOG_WARN, "Forward DNS server may not be available");
-    } 
+    } else {
+        log_msg(LOG_INFO, "The forward DNS server is available");
+    }
 
     int sockfd;
     struct sockaddr_in server_addr;

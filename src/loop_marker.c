@@ -86,7 +86,7 @@ uint16_t get_loop_marker(ldns_pkt *pkt)
             const uint8_t *data = ldns_edns_get_data(opt);
             size_t datalen = ldns_edns_get_size(opt);
             if (!data || datalen < HOP_COUNT_DATA_LEN) {
-                log_msg(LOG_ERROR, "Option found but data too short");
+                log_msg(LOG_DEBUG, "Option found but data too short");
                 return 0;
             }
 
@@ -96,6 +96,6 @@ uint16_t get_loop_marker(ldns_pkt *pkt)
         }
     }
 
-    log_msg(LOG_ERROR, "Option code %u not found", MY_OPTION_CODE);
+    log_msg(LOG_DEBUG, "Option code %u not found", MY_OPTION_CODE);
     return 0;
 }

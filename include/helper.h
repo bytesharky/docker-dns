@@ -14,7 +14,8 @@ typedef enum {
     OPT_NUM_WORKERS,
     OPT_FOREGROUND,
     OPT_HELP,
-    OPT_VERSION
+    OPT_VERSION,
+    OPT_HEALTHY
 } OptionType;
 
 #if defined(__linux__)

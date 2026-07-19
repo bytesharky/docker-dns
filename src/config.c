@@ -1,11 +1,13 @@
 #include "config.h"
-#include "helper.h"   // for print_help, get_option_type, OPT_CONTAINER, OPT...
+#include "dns.h"      // for test_forward_dns
+#include "helper.h"   // for print_help, get_option_type, OPT...
 #include "logging.h"  // for log_msg, LOG_FATAL, parse_log_level, log_level
 #include <errno.h>    // for errno, ERANGE
 #include <limits.h>   // for INT_MAX, INT_MIN, LONG_MAX, LONG_MIN
 #include <stdio.h>    // for fprintf, printf, stderr
 #include <stdlib.h>   // for exit, free, getenv, malloc, strtol
 #include <string.h>   // for strncpy, memmove, strlen
+#include <unistd.h>   // for gethostname
 
 int max_hops = MAX_HOPS_DEFAULT;
 int num_workers = NUM_WORKERS_DEFAULT;
@@ -23,9 +25,19 @@ void init_config_env(void) {
     // 从环境变量读取
     log_level = parse_log_level(getenv(LOG_LEVEL_ENV), LOG_INFO);
     read_env(GATEWAY_ENV, GATEWAY_DEFAULT, gateway_name, sizeof(gateway_name));
-    read_env(CONTAINER_ENV, CONTAINER_DEFAULT, container_name, sizeof(container_name));
     read_env(SUFFIX_ENV, SUFFIX_DEFAULT, suffix_domain, sizeof(suffix_domain));
     read_env(FORWARD_DNS_ENV, FORWARD_DNS_DEFAULT, forward_dns, sizeof(forward_dns));
+
+    // 获取主机名(容器短ID)
+    if (gethostname(container_name, sizeof(container_name)) == 0)
+    {
+        log_msg(LOG_INFO, "Container short ID: %s", container_name);
+    }
+    else
+    {
+        log_msg(LOG_ERROR, "Error: Get container short ID failed");
+    }
+
 
     char *endptr;
     
@@ -116,12 +128,8 @@ void init_config_argc(int argc, char *argv[]) {
                 break;
 
             case OPT_CONTAINER:
-                if (i + 1 >= argc) {
-                    log_msg(LOG_FATAL, "--container requires a value");
-                    exit(1);
-                }
-                strncpy(container_name, argv[++i], sizeof(container_name) - 1);
-                container_name[sizeof(container_name) - 1] = '\0';
+                log_msg(LOG_WARN,  "The --container flag is deprecated.");
+                i++;
                 break;
                 
             case OPT_DNS_SERVER:
@@ -206,6 +214,14 @@ void init_config_argc(int argc, char *argv[]) {
             case OPT_VERSION: 
                 print_version();
                 exit(0);
+            case OPT_HEALTHY:
+                if (!test_forward_dns()) {
+                    log_msg(LOG_WARN, "Forward DNS server may not be available");
+                    exit(1);
+                } else {
+                    log_msg(LOG_INFO, "The forward DNS server is available");
+                    exit(0);
+                }
             case OPT_UNKNOWN:
                 fprintf(stderr, "Error: Unknown option '%s'\n", argv[i]);
                 print_help(argv[0]);

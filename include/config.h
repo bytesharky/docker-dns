@@ -16,7 +16,6 @@
 #define LISTEN_PORT_DEFAULT 53
 #define FORWARD_DNS_DEFAULT "127.0.0.11"
 #define GATEWAY_DEFAULT "gateway"
-#define CONTAINER_DEFAULT "docker-dns"
 #define SUFFIX_DEFAULT ".docker"
 #define LOG_LEVEL_DEFAULT LOG_INFO
 #define KEEP_SUFFIX_DEFAULT 0

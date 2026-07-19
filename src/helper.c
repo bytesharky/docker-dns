@@ -1,4 +1,4 @@
-#include "config.h"  // for CONTAINER_DEFAULT, FORWARD_DNS_DEFAULT, GATEWAY_...
+#include "config.h"  // for FORWARD_DNS_DEFAULT, GATEWAY_...
 #include "helper.h"
 #include <stdio.h>   // for printf, NULL
 #include <string.h>  // for strcmp, strlen
@@ -12,7 +12,6 @@ void print_help(const char *progname) {
     printf("  -L, --log-level    Set log level (DEBUG, default: INFO, WARN, ERROR, FATAL)\n");
     printf("  -G, --gateway      Set gateway name (default: %s)\n", GATEWAY_DEFAULT);
     printf("  -S, --suffix       Set suffix name (default: %s)\n", SUFFIX_DEFAULT);
-    printf("  -C, --container    Set container name (default: %s)\n", CONTAINER_DEFAULT);
     printf("  -D, --dns-server   Set forward DNS server (default: %s)\n", FORWARD_DNS_DEFAULT);
     printf("  -P, --port         Set listening port (default: %d)\n", LISTEN_PORT_DEFAULT);
     printf("  -K, --keep-suffix  keep suffix forward dns query (default: %s)\n", KEEP_SUFFIX_DEFAULT ? "keep" : "strip");
@@ -27,7 +26,6 @@ void print_help(const char *progname) {
     printf("  --log-level    =>  LOG_LEVEL\n");
     printf("  --gateway      =>  GATEWAY_NAME\n");
     printf("  --suffix       =>  SUFFIX_DOMAIN\n");
-    printf("  --container    =>  CONTAINER_NAME\n");
     printf("  --dns-server   =>  FORWARD_DNS\n");
     printf("  --port         =>  LISTEN_PORT\n");
     printf("  --keep-suffix  =>  KEEP_SUFFIX\n");
@@ -82,6 +80,7 @@ OptionType get_option_type(const char* arg) {
         if (strcmp(opt, "foreground") == 0)   return OPT_FOREGROUND;
         if (strcmp(opt, "help") == 0)         return OPT_HELP;
         if (strcmp(opt, "version") == 0)      return OPT_VERSION;
+        if (strcmp(opt, "healthy") == 0)      return OPT_HEALTHY;
         
         return OPT_UNKNOWN;
     }
