@@ -219,7 +219,7 @@ void init_config_argc(int argc, char *argv[]) {
                     exit(0);
                 }
             case OPT_UNKNOWN:
-                fprintf(stderr, "Error: Unknown option '%s'\n", argv[i]);
+                printf("Error: Unknown option '%s'\n\n", argv[i]);
                 print_help(argv[0]);
                 exit(1);
         }
