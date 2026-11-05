@@ -4,6 +4,7 @@
 #include "gateway.h"
 #include "logging.h"        // for log_msg, LOG_DEBUG, LOG_ERROR, LOG_WARN
 #include <arpa/inet.h>      // for inet_ntoa
+#include <errno.h>          // for errno, strerror
 #include <stdio.h>          // for fclose, NULL, snprintf, fgets, fopen, fscanf
 #include <stdlib.h>         // for free
 #include <string.h>         // for strdup, strcspn, strlen
@@ -41,7 +42,8 @@ int resolve_gateway_ip(void) {
     
     FILE *f = fopen("/proc/net/route", "r");
     if (!f) {
-        perror("fopen /proc/net/route");
+        log_msg(LOG_DEBUG, "Cannot open /proc/net/route: %s (gateway discovery requires Linux /proc)",
+                strerror(errno));
         return 1;
     }
 

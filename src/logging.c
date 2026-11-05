@@ -3,16 +3,60 @@
 #include "logging.h"
 #include <stdarg.h>   // for va_end, va_start
 #include <stdio.h>    // for printf, fflush, vprintf, NULL, stdout
-#include <stdlib.h>   // for free
+#include <stdlib.h>   // for free, getenv
 #include <string.h>   // for strlen
 #include <strings.h>  // for strcasecmp
 #include <time.h>     // for ctime, time, time_t
+#include <unistd.h>   // for isatty, fileno
 #include <pthread.h>  // for pthread_mutex_lock
+
+#ifdef _WIN32
+#include <windows.h>  // for GetStdHandle, GetConsoleMode, SetConsoleMode
+#ifndef ENABLE_VIRTUAL_TERMINAL_PROCESSING
+#define ENABLE_VIRTUAL_TERMINAL_PROCESSING 0x0004
+#endif
+#endif
 
 log_level_t log_level = LOG_INFO;
 const char *level_str[] = {"DEBUG", "INFO", "WARN", "ERROR", "FATAL"};
+
+// 各级别 ANSI 颜色（DEBUG 灰、INFO 绿、WARN 黄、ERROR 红、FATAL 加粗红）
+static const char *level_color[] = {
+    "\x1b[90m",   // DEBUG
+    "\x1b[32m",   // INFO
+    "\x1b[33m",   // WARN
+    "\x1b[31m",   // ERROR
+    "\x1b[1;31m"  // FATAL
+};
+#define COLOR_RESET  "\x1b[0m"
+#define COLOR_DIM    "\x1b[2m"
+
 // 定义全局互斥锁，保护日志输出
 static pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// 颜色开关：-1 未初始化，0 关闭，1 开启
+static int color_enabled = -1;
+
+// 判断是否启用彩色输出（只检测一次）
+static int use_color(void) {
+    if (color_enabled < 0) {
+        color_enabled = 0;
+        if (getenv("NO_COLOR") != NULL) return 0;   // 显式禁用
+#ifdef _WIN32
+        // Windows 控制台需先启用 VT 转义序列支持（Win10+）
+        HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+        DWORD mode = 0;
+        if (h != INVALID_HANDLE_VALUE && GetConsoleMode(h, &mode)) {
+            if (SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING))
+                color_enabled = 1;
+        }
+        // 重定向到文件/管道时 GetConsoleMode 失败，保持无色
+#else
+        if (isatty(fileno(stdout))) color_enabled = 1;
+#endif
+    }
+    return color_enabled;
+}
 
 // 输出日志
 void vlog_msg(log_level_t level, const char *format, va_list args) {
@@ -25,7 +69,12 @@ void vlog_msg(log_level_t level, const char *format, va_list args) {
     char *timestr = ctime(&now);
     timestr[strlen(timestr) - 1] = '\0';
 
-    printf("[%s] %-5s ", timestr, level_str[level]);
+    if (use_color()) {
+        printf(COLOR_DIM "[%s]" COLOR_RESET " ", timestr);
+        printf("%s%-5s" COLOR_RESET " ", level_color[level], level_str[level]);
+    } else {
+        printf("[%s] %-5s ", timestr, level_str[level]);
+    }
     vprintf(format, args);
     printf("\n");
     fflush(stdout);
@@ -43,7 +92,7 @@ void log_msg(log_level_t level, const char *format, ...) {
 
 // 将字符转为日志级别
 int parse_log_level(const char *level_str, int default_val) {
-    if (level_str == NULL) return default_val;    
+    if (level_str == NULL) return default_val;
 
     if (strcasecmp(level_str, "DEBUG") == 0) return LOG_DEBUG;
     if (strcasecmp(level_str, "INFO")  == 0) return LOG_INFO;
@@ -52,11 +101,11 @@ int parse_log_level(const char *level_str, int default_val) {
     if (strcasecmp(level_str, "FATAL") == 0) return LOG_FATAL;
 
     int *intptr = str2int(level_str);
-    
+
     if (intptr != NULL) {
         int conv_level = (int)*intptr;
         free(intptr);
-        if (conv_level >= LOG_DEBUG && 
+        if (conv_level >= LOG_DEBUG &&
             conv_level <= LOG_FATAL) return (int)conv_level;
     }
 
