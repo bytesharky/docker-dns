@@ -56,8 +56,9 @@ FROM scratch
 # 拷贝二进制到运行镜像
 COPY --from=builder /app/docker-dns /docker-dns
 
-# 暴露 53/udp 端口
+# 暴露 53/udp（DNS）与 80/tcp（DoH/HTTP-DNS）端口
 EXPOSE 53/udp
+EXPOSE 80/tcp
 
 # 健康检查
 HEALTHCHECK --interval=10s --timeout=3s --start-period=15s \

@@ -243,6 +243,52 @@ Docker DNS 转发器相当于宿主机与 Docker 内置 DNS 之间的“桥梁�
 
 **生产环境**谨慎使用，更推荐固定IP方式。
 
+## DoH / HTTP-DNS 支持
+
+除 UDP DNS 监听外，`docker-dns` 现在内置了一个 **DoH（DNS-over-HTTPS，RFC 8484）/ HTTP-DNS** 服务器。它复用与 UDP 路径完全相同的解析逻辑，因此 `.docker` 后缀域名与 `gateway.<后缀>` 在 HTTP 下解析行为一致。
+
+HTTP 服务器监听由 `-H / --doh-port`（环境变量 `DOH_PORT`，默认 `80`）指定的端口。由于 TLS 通常由前置的反向代理（nginx 等）终止，内置服务器本身使用明文 HTTP，由代理负责 HTTPS。
+
+### 端点
+
+| 方法   | 路径                           | 说明                                                         |
+| ------ | ------------------------------ | ------------------------------------------------------------ |
+| `POST` | `/dns-query`（任意路径）       | RFC 8484：`Content-Type: application/dns-message`，请求体为原始 DNS 报文。 |
+| `GET`  | `/dns-query?dns=<base64url>`   | RFC 8484：`dns` 参数为 base64url 编码的 DNS 查询。           |
+| `GET`  | `/?domain=NAME&type=TYPE`      | JSON 调试端点（默认 `type=A`）。                             |
+| `GET`  | `/healthz` 或 `/`              | 健康检查，返回 `{"status":"ok",...}`。                       |
+
+`POST`/`GET` 的 DoH 响应使用 `Content-Type: application/dns-message`；JSON 端点返回 `application/json` 并附带 `Access-Control-Allow-Origin: *` 头。
+
+### 示例：通过 DoH 解析 `gateway.docker`
+
+```bash
+# RFC 8484（GET）
+curl -s 'https://dns.example.com/dns-query?dns=<base64url-of-query>' \
+     -H 'Accept: application/dns-message' | hexdump -C
+
+# JSON 调试
+curl -s 'https://dns.example.com/?domain=gateway.docker&type=A'
+# -> {"domain":"gateway.docker","type":"A","server":"127.0.0.11","rcode":0,"status":"NOERROR",...}
+```
+
+### 通过 nginx 部署（TLS）
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name dns.example.com;
+    # ... ssl_certificate / ssl_certificate_key ...
+
+    location / {
+        proxy_pass http://127.0.0.1:80;   # docker-dns 的 DoH 端口
+        proxy_set_header Host $host;
+    }
+}
+```
+
+> 与 UDP 行为一致，DoH 也只响应 `.docker` 后缀域名（及网关域名），其余查询返回 `REFUSED`。
+
 ## 附：命令行参数/环境变量说明
 
 | 短选项 | 长选项          | 环境变量         | 功能说明                                                     | 默认值           |
@@ -253,6 +299,7 @@ Docker DNS 转发器相当于宿主机与 Docker 内置 DNS 之间的“桥梁�
 | `-C`   | `--container`   | `CONTAINER_NAME` | 设置容器名称，仅用于启动服务时向转发服务器发送`容器名.后缀`的解析请求，以测试连通性。 | `docker-dns`     |
 | `-D`   | `--dns-server`  | `FORWARD_DNS`    | 设置转发DNS服务器，即该服务收到指定后缀的DNS查询后，转发请求的目标服务器，默认docker内置DNS | `127.0.0.11`     |
 | `-P`   | `--port`        | `LISTEN_PORT`    | 设置服务的监听端口                                           | `53`             |
+| `-H`   | `--doh-port`    | `DOH_PORT`       | 设置 DoH/HTTP-DNS 监听端口（RFC 8484），生产环境需在前面加 TLS 反向代理 | `80`             |
 | `-K`   | `--keep-suffix` | `KEEP_SUFFIX`    | 控制转发DNS查询时是否保留后缀，转发到`127.0.0.11`时应去除后缀 | -                |
 | `-M`   | `--max-hops`    | `MAX_HOPS`       | 设置DNS查询的最大跳转（ hop ）次数，防止循环查询             | `3`              |
 | `-W`   | `--workers`     | `NUM_WORKERS`    | 设置服务的工作线程数                                         | `4`              |
@@ -269,6 +316,7 @@ Options:
   -C, --container    Set container name (default: docker-dns)
   -D, --dns-server   Set forward DNS server (default: 127.0.0.11)
   -P, --port         Set listening port (default: 53)
+  -H, --doh-port     Set DoH/HTTP listen port (default: 80)
   -K, --keep-suffix  keep suffix forward dns query (default: strip)
   -M, --max-hops     Set maximum hop count (default: 3)
   -W, --workers      Set number of worker threads (default: 4)
@@ -283,6 +331,7 @@ Environment variable:
   --container    =>  CONTAINER_NAME
   --dns-server   =>  FORWARD_DNS
   --port         =>  LISTEN_PORT
+  --doh-port     =>  DOH_PORT
   --keep-suffix  =>  KEEP_SUFFIX
   --max-hops     =>  MAX_HOPS
   --workers      =>  NUM_WORKERS

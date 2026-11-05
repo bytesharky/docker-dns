@@ -229,6 +229,59 @@ The Docker DNS Forwarder acts as a "bridge" between the host machine and Docker�
 
 Use **with caution in production environments** — fixed IP addresses are recommended instead.  
 
+## DoH / HTTP-DNS Support
+
+In addition to the UDP DNS listener, `docker-dns` now ships with a built-in
+**DoH (DNS-over-HTTPS, RFC 8484) / HTTP-DNS** server. It reuses the exact same
+resolution logic as the UDP path, so `.docker`-suffixed names and `gateway.<suffix>`
+are resolved identically over HTTP.
+
+The HTTP server listens on the port set by `-H / --doh-port` (env `DOH_PORT`, default `80`).
+Because the daemon terminates TLS at a reverse proxy (nginx, etc.) in front of it, the
+built-in server itself speaks plain HTTP — your proxy handles HTTPS.
+
+### Endpoints
+
+| Method | Path                         | Description                                                                 |
+|--------|------------------------------|-----------------------------------------------------------------------------|
+| `POST` | `/dns-query` (any path)      | RFC 8484: `Content-Type: application/dns-message`, body = raw DNS wire.      |
+| `GET`  | `/dns-query?dns=<base64url>` | RFC 8484: base64url-encoded DNS query in the `dns` parameter.               |
+| `GET`  | `/?domain=NAME&type=TYPE`    | JSON debug endpoint (default `type=A`).                                     |
+| `GET`  | `/healthz` or `/`            | Health check, returns `{"status":"ok",...}`.                               |
+
+`POST`/`GET` DoH responses use `Content-Type: application/dns-message`; the JSON
+endpoint returns `application/json` and an `Access-Control-Allow-Origin: *` header.
+
+### Example: resolve `gateway.docker` over DoH (via curl + jq)
+
+```bash
+# RFC 8484 (GET)
+curl -s 'https://dns.example.com/dns-query?dns=<base64url-of-query>' \
+     -H 'Accept: application/dns-message' | hexdump -C
+
+# JSON debug
+curl -s 'https://dns.example.com/?domain=gateway.docker&type=A'
+# -> {"domain":"gateway.docker","type":"A","server":"127.0.0.11","rcode":0,"status":"NOERROR",...}
+```
+
+### Deploying behind nginx (TLS)
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name dns.example.com;
+    # ... ssl_certificate / ssl_certificate_key ...
+
+    location / {
+        proxy_pass http://127.0.0.1:80;   # docker-dns DoH port
+        proxy_set_header Host $host;
+    }
+}
+```
+
+> Only `.docker`-suffixed names (and the gateway) are answered over DoH — other
+> queries return `REFUSED`, consistent with the UDP behavior.
+
 ## Appendix: Command-Line Arguments / Environment Variables  
 
 | Short Opt | Long Option       | Env Variable      | Description                                                                 | Default Value     |
@@ -239,6 +292,7 @@ Use **with caution in production environments** — fixed IP addresses are recom
 | `-C`      | `--container`     | `CONTAINER_NAME`  | Sets container name (used to send a test `container-name.suffix` resolution request to the forwarder on startup) | `docker-dns`      |
 | `-D`      | `--dns-server`    | `FORWARD_DNS`     | Sets the target DNS server for forwarded queries (default: Docker’s built-in DNS) | `127.0.0.11`      |
 | `-P`      | `--port`          | `LISTEN_PORT`     | Sets the port the service listens on                                        | `53`              |
+| `-H`      | `--doh-port`      | `DOH_PORT`        | Sets the DoH/HTTP-DNS listen port (RFC 8484). Put a TLS reverse proxy in front for HTTPS | `80`              |
 | `-K`      | `--keep-suffix`   | `KEEP_SUFFIX`     | Controls whether to retain the suffix when forwarding DNS queries (strip suffix when forwarding to `127.0.0.11`) | Disabled          |
 | `-M`      | `--max-hops`      | `MAX_HOPS`        | Sets maximum hop count for DNS queries (prevents looped queries)           | `3`               |
 | `-W`      | `--workers`       | `NUM_WORKERS`     | Sets the number of worker threads for the service                           | `4`               |
@@ -255,6 +309,7 @@ Options:
   -C, --container    Set container name (default: docker-dns)
   -D, --dns-server   Set forward DNS server (default: 127.0.0.11)
   -P, --port         Set listening port (default: 53)
+  -H, --doh-port     Set DoH/HTTP listen port (default: 80)
   -K, --keep-suffix  keep suffix forward dns query (default: strip)
   -M, --max-hops     Set maximum hop count (default: 3)
   -W, --workers      Set number of worker threads (default: 4)
@@ -269,6 +324,7 @@ Environment variable:
   --container    =>  CONTAINER_NAME
   --dns-server   =>  FORWARD_DNS
   --port         =>  LISTEN_PORT
+  --doh-port     =>  DOH_PORT
   --keep-suffix  =>  KEEP_SUFFIX
   --max-hops     =>  MAX_HOPS
   --workers      =>  NUM_WORKERS
