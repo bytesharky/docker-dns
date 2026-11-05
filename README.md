@@ -1,4 +1,8 @@
+[English](README.md) | [中文(Chinese)](README_zh.md)
+
 # Docker DNS Forwarder
+
+> Current version: **1.2.1** — supports UDP DNS, DoH/HTTP-DNS (RFC 8484), a local `hosts` file, native Windows background daemon, and colored logs.
 
 **Resolve Container Names to IPs from Host Machine**
 
@@ -28,12 +32,6 @@ Only two steps are required to enable the host to resolve container names:
 
 After that, you can directly access containers from the host using the domain name format container-name.custom-suffix, without the need for tedious operations such as port mapping, fixing container IPs, or modifying the hosts file.
 
-## Read this in other languages
-
-[English](README.md)
-
-[中文,Chinese](README_zh.md)
-
 ## ✨ Feature Highlights  
 
 ### 1. Host Machine Resolves Container Names Directly  
@@ -50,8 +48,9 @@ curl http://myapp.docker:8080
 
 ### 2. Lightweight Forwarding Logic  
 
-- Domains matching `.docker` → Forwarded to Docker’s built-in DNS (`127.0.0.11`) for container IP resolution.  
-- All other domains → Return `REFUSED`, so the host automatically uses public DNS (no impact on normal internet access).  
+- Domains matching the configured suffix (e.g. `.docker`) → Forwarded to Docker’s built-in DNS (`127.0.0.11`) for container IP resolution.  
+- With an **empty suffix** (the binary default), *all* domains are forwarded to the upstream DNS, turning it into a general forwarder.  
+- When a suffix **is** set, non-matching domains → Return `REFUSED`, so the host automatically uses public DNS (no impact on normal internet access).  
 
 *The default forwarding address can be modified via command-line arguments or environment variables.*  
 
@@ -69,6 +68,23 @@ Built on the `ldns` library and UDP protocol, it runs with minimal CPU and memor
 
 Docker’s built-in DNS forwards non-container-name domains to the host’s DNS service. This means you can also use domains like `gateway.docker` **inside Docker containers**:  
 Docker forwards the request to the host’s configured DNS server (i.e., this forwarder). The forwarder strips the `.docker` suffix to form a valid container name, then uses Docker’s built-in DNS to resolve the IP and return the result.  
+
+### 6. Local `hosts` File Support  
+
+A local `hosts` file (standard `/etc/hosts` format, IPv4 + IPv6, multiple aliases per line) is consulted **before** any suffix gate or upstream forwarding — exactly like the system `/etc/hosts`. Any hostname defined there is answered directly (synthesizing the A/AAAA record) and never forwarded.  
+
+By default the file is `/etc/hosts` on Linux and `C:/Windows/System32/drivers/etc/hosts` on Windows; override with `--hosts <path>` / `HOSTS_FILE`. In Docker you can mount your own file:  
+
+```bash
+docker run -d ... -v /path/my.hosts:/etc/hosts-custom:ro docker-dns:static \
+  -e HOSTS_FILE=/etc/hosts-custom
+```
+
+### 7. Windows Native Daemon & Colored Logs  
+
+On Windows the binary daemonizes itself: launched without `-f` it spawns a detached, windowless background process and the parent exits immediately (use `-f`/`--foreground` to keep it in the console). Logs are color-coded by level (DEBUG gray, INFO green, WARN yellow, ERROR red, FATAL bold red) on a capable terminal; output redirected to a file or piped is emitted plain (ANSI disabled) so log files stay clean, and `NO_COLOR=1` forces plain output.  
+
+> **Default behavior note:** the binary’s built-in defaults are an **empty suffix** (forward *all* domains) and forward DNS `8.8.8.8`, so it works as a general forwarder out of the box. The Docker images restore the original Docker behavior via environment variables (`SUFFIX_DOMAIN=.docker`, `FORWARD_DNS=127.0.0.11`) in their Dockerfiles — no flag changes needed inside a container.
 
 ## ⚠️ Important Notes  
 
@@ -236,7 +252,7 @@ In addition to the UDP DNS listener, `docker-dns` now ships with a built-in
 resolution logic as the UDP path, so `.docker`-suffixed names and `gateway.<suffix>`
 are resolved identically over HTTP.
 
-The HTTP server listens on the port set by `-H / --doh-port` (env `DOH_PORT`, default `80`).
+The HTTP server listens on the port set by `-O / --doh-port` (env `DOH_PORT`, default `80`).
 Because the daemon terminates TLS at a reverse proxy (nginx, etc.) in front of it, the
 built-in server itself speaks plain HTTP — your proxy handles HTTPS.
 
@@ -279,8 +295,9 @@ server {
 }
 ```
 
-> Only `.docker`-suffixed names (and the gateway) are answered over DoH — other
-> queries return `REFUSED`, consistent with the UDP behavior.
+> When a suffix is configured, only `.docker`-suffixed names (and the gateway) are
+> answered over DoH — other queries return `REFUSED`, consistent with the UDP
+> behavior. With an empty suffix, all queries are forwarded.
 
 ## Appendix: Command-Line Arguments / Environment Variables  
 
@@ -288,43 +305,48 @@ server {
 |-----------|-------------------|-------------------|-----------------------------------------------------------------------------|-------------------|
 | `-L`      | `--log-level`     | `LOG_LEVEL`       | Sets log verbosity (controls detail of output)                             | `INFO`            |
 | `-G`      | `--gateway`       | `GATEWAY_NAME`    | Sets gateway name (inside Docker, the gateway is the host; allows resolving the host IP via `gateway-name.suffix`) | `gateway`         |
-| `-S`      | `--suffix`        | `SUFFIX_DOMAIN`   | Sets the domain suffix for forwarded DNS queries                           | `.docker`         |
-| `-C`      | `--container`     | `CONTAINER_NAME`  | Sets container name (used to send a test `container-name.suffix` resolution request to the forwarder on startup) | `docker-dns`      |
-| `-D`      | `--dns-server`    | `FORWARD_DNS`     | Sets the target DNS server for forwarded queries (default: Docker’s built-in DNS) | `127.0.0.11`      |
-| `-P`      | `--port`          | `LISTEN_PORT`     | Sets the port the service listens on                                        | `53`              |
-| `-H`      | `--doh-port`      | `DOH_PORT`        | Sets the DoH/HTTP-DNS listen port (RFC 8484). Put a TLS reverse proxy in front for HTTPS | `80`              |
+| `-S`      | `--suffix`        | `SUFFIX_DOMAIN`   | Sets the domain suffix for forwarded DNS queries. **Empty** = forward *all* domains; `none`/`off`/`any` also mean empty | *empty* (Docker image sets `.docker`) |
+| `-D`      | `--dns-server`    | `FORWARD_DNS`     | Sets the target DNS server for forwarded queries                           | `8.8.8.8` (Docker image sets `127.0.0.11`) |
+| `-P`      | `--port`          | `LISTEN_PORT`     | Sets the UDP listen port                                                   | `53`              |
+| `-O`      | `--doh-port`      | `DOH_PORT`        | Sets the DoH/HTTP-DNS listen port (RFC 8484). Put a TLS reverse proxy in front for HTTPS | `80`              |
+| `-H`      | `--hosts`         | `HOSTS_FILE`      | Local `hosts` file path (standard `/etc/hosts` format); consulted before forwarding | `/etc/hosts` (`C:/Windows/System32/drivers/etc/hosts` on Windows) |
 | `-K`      | `--keep-suffix`   | `KEEP_SUFFIX`     | Controls whether to retain the suffix when forwarding DNS queries (strip suffix when forwarding to `127.0.0.11`) | Disabled          |
 | `-M`      | `--max-hops`      | `MAX_HOPS`        | Sets maximum hop count for DNS queries (prevents looped queries)           | `3`               |
 | `-W`      | `--workers`       | `NUM_WORKERS`     | Sets the number of worker threads for the service                           | `4`               |
+| `-C`      | `--container`     | `CONTAINER_NAME`  | ⚠️ **Deprecated.** Previously set a container name for a startup connectivity probe. No longer used. | `docker-dns`      |
 | `-f`      | `--foreground`    | -                 | Runs the service in foreground mode (does not daemonize)                   | Disabled (daemon by default) |
 | `-h`      | `--help`          | -                 | Shows this help message (lists options + descriptions) and exits            | -                 |
+| `-v`      | `--version`       | -                 | Shows version and build info, then exits                                   | -                 |
+
+> The Docker images re-apply the original Docker behavior through environment variables baked into the Dockerfiles (`SUFFIX_DOMAIN=.docker`, `FORWARD_DNS=127.0.0.11`), so inside a container you still get the "only `.docker` names, forward to Docker DNS" semantics without passing any flags.
 
 ```bash
-root@VM-4-2-debian:~# ./docker-dns/docker-dns -h
-Usage: ./docker-dns [OPTIONS]
+$ docker-dns -h
+Usage: docker-dns [OPTIONS]
 Options:
   -L, --log-level    Set log level (DEBUG, default: INFO, WARN, ERROR, FATAL)
   -G, --gateway      Set gateway name (default: gateway)
-  -S, --suffix       Set suffix name (default: .docker)
-  -C, --container    Set container name (default: docker-dns)
-  -D, --dns-server   Set forward DNS server (default: 127.0.0.11)
+  -S, --suffix       Set suffix name (default: empty = forward ALL domains; 'none' also means empty)
+  -D, --dns-server   Set forward DNS server (default: 8.8.8.8)
   -P, --port         Set listening port (default: 53)
-  -H, --doh-port     Set DoH/HTTP listen port (default: 80)
+  -O, --doh-port     Set DoH/HTTP listen port (default: 80)
+  -H, --hosts        Set local hosts file path (default: /etc/hosts)
   -K, --keep-suffix  keep suffix forward dns query (default: strip)
   -M, --max-hops     Set maximum hop count (default: 3)
   -W, --workers      Set number of worker threads (default: 4)
   -f, --foreground   Run in foreground mode (do not daemonize)
   -h, --help         Show this help message and exit
+  -v, --version      Show version and exit
 
 Environment variable:
   Command-line arguments take precedence over environment variables.
   --log-level    =>  LOG_LEVEL
   --gateway      =>  GATEWAY_NAME
   --suffix       =>  SUFFIX_DOMAIN
-  --container    =>  CONTAINER_NAME
   --dns-server   =>  FORWARD_DNS
   --port         =>  LISTEN_PORT
   --doh-port     =>  DOH_PORT
+  --hosts        =>  HOSTS_FILE
   --keep-suffix  =>  KEEP_SUFFIX
   --max-hops     =>  MAX_HOPS
   --workers      =>  NUM_WORKERS

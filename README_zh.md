@@ -1,4 +1,8 @@
+[English](README.md) | [中文(Chinese)](README_zh.md)
+
 # Docker DNS 转发器
+
+> 当前版本：**1.2.1** — 支持 UDP DNS、DoH/HTTP-DNS（RFC 8484）、本地 `hosts` 文件、Windows 原生后台守护进程以及彩色日志。
 
 **让宿主机轻松解析容器名到 IP 地址**
 
@@ -28,12 +32,6 @@
 
 此后，你即可在宿主机通过 `容器名.自定义后缀` 的域名形式直接访问容器，无需再做端口映射、固定容器 IP、修改 hosts 文件等繁琐操作。
 
-## Read this in other languages
-
-[English](README.md)
-
-[中文,Chinese](README_zh.md)
-
 ## ✨ 功能特性
 
 ### 1. 宿主机直接解析容器名
@@ -50,8 +48,9 @@ curl http://myapp.docker:8080
 
 ### 2. 轻量级转发逻辑
 
-- 匹配 `.docker` 域名 → 转发到 Docker 内置 DNS（`127.0.0.11`）解析容器 IP；
-- 其他域名 → 返回 `REFUSED`，宿主机自动使用公共 DNS，不影响正常上网。
+- 匹配配置后缀（例如 `.docker`）的域名 → 转发到 Docker 内置 DNS（`127.0.0.11`）解析容器 IP；
+- **空后缀**（二进制默认值）时，*所有*域名都会转发到上游 DNS，此时它就是一个通用转发器；
+- 当**设置了**后缀时，其余域名 → 返回 `REFUSED`，宿主机自动使用公共 DNS，不影响正常上网。
 
 *可通过命令行参数或环境变量修改默认的转发地址*  
 
@@ -70,6 +69,23 @@ curl http://myapp.docker:8080
   Docker内置的DNS服务器，会将非容器名的域名转发到宿主机的DNS服务，这就意味这你也可以在Docker容器中使用类似 `gateway.docker` 的域名。
   
   Docker会将它转发至宿主机配置的DNS服务器（即该转发器），该转发器先去除 `.docker` 后缀变为合法容器名，再由Docker内置的DNS服务器解析得到IP地址，并返回最终结果。
+
+### 6. 本地 `hosts` 文件支持
+
+  支持标准 `/etc/hosts` 格式的本地 hosts 文件（IPv4 + IPv6，一行可写多个别名）。它会在**后缀门控和上游转发之前**被查询，行为同系统 `/etc/hosts`：文件中定义的任意主机名都会被直接应答（合成 A/AAAA 记录），不会再转发。
+
+  默认文件：Linux 为 `/etc/hosts`，Windows 为 `C:/Windows/System32/drivers/etc/hosts`；可用 `--hosts <path>` / `HOSTS_FILE` 覆盖。在 Docker 中可挂载自定义文件：
+
+  ```bash
+  docker run -d ... -v /path/my.hosts:/etc/hosts-custom:ro docker-dns:static \
+    -e HOSTS_FILE=/etc/hosts-custom
+  ```
+
+### 7. Windows 原生守护进程与彩色日志
+
+  在 Windows 上二进制会自行后台化：不带 `-f` 启动时，它会派生一个无窗口、脱离控制台的子进程在后台运行，父进程立即退出（加 `-f`/`--foreground` 则保持在控制台前台运行）。日志按级别着色（DEBUG 灰、INFO 绿、WARN 黄、ERROR 红、FATAL 加粗红），在支持的终端中生效；重定向到文件或管道时自动输出纯文本（不输出 ANSI 转义，保证日志文件干净），设置 `NO_COLOR=1` 也可强制纯文本。
+
+> **关于默认值：** 二进制内置默认是**空后缀**（转发*所有*域名）+ 转发 DNS `8.8.8.8`，因此开箱即可作为通用转发器使用。Docker 镜像通过 Dockerfile 中的环境变量（`SUFFIX_DOMAIN=.docker`、`FORWARD_DNS=127.0.0.11`）还原原本的 Docker 行为——在容器内无需额外加任何参数即可保持「仅 `.docker` 域名、转发至 Docker 内置 DNS」语义。
 
 ---
 
@@ -247,7 +263,7 @@ Docker DNS 转发器相当于宿主机与 Docker 内置 DNS 之间的“桥梁�
 
 除 UDP DNS 监听外，`docker-dns` 现在内置了一个 **DoH（DNS-over-HTTPS，RFC 8484）/ HTTP-DNS** 服务器。它复用与 UDP 路径完全相同的解析逻辑，因此 `.docker` 后缀域名与 `gateway.<后缀>` 在 HTTP 下解析行为一致。
 
-HTTP 服务器监听由 `-H / --doh-port`（环境变量 `DOH_PORT`，默认 `80`）指定的端口。由于 TLS 通常由前置的反向代理（nginx 等）终止，内置服务器本身使用明文 HTTP，由代理负责 HTTPS。
+HTTP 服务器监听由 `-O / --doh-port`（环境变量 `DOH_PORT`，默认 `80`）指定的端口。由于 TLS 通常由前置的反向代理（nginx 等）终止，内置服务器本身使用明文 HTTP，由代理负责 HTTPS。
 
 ### 端点
 
@@ -287,7 +303,7 @@ server {
 }
 ```
 
-> 与 UDP 行为一致，DoH 也只响应 `.docker` 后缀域名（及网关域名），其余查询返回 `REFUSED`。
+> 配置了后缀时，与 UDP 行为一致，DoH 也只响应 `.docker` 后缀域名（及网关域名），其余查询返回 `REFUSED`；空后缀时则转发所有查询。
 
 ## 附：命令行参数/环境变量说明
 
@@ -295,43 +311,48 @@ server {
 | ------ | --------------- | ---------------- | ------------------------------------------------------------ | ---------------- |
 | `-L`   | `--log-level`   | `LOG_LEVEL`      | 设置日志输出级别，控制日志的详细程度                         | `INFO`           |
 | `-G`   | `--gateway`     | `GATEWAY_NAME`   | 设置网关名称，在Docker中网关为宿主机，该选项允许在docker容器中通过`网关名称.后缀`，自动解析到宿主机IP地址。 | `gateway`        |
-| `-S`   | `--suffix`      | `SUFFIX_DOMAIN`  | 设置后缀名称，要转发的域名后缀                               | `.docker`        |
-| `-C`   | `--container`   | `CONTAINER_NAME` | 设置容器名称，仅用于启动服务时向转发服务器发送`容器名.后缀`的解析请求，以测试连通性。 | `docker-dns`     |
-| `-D`   | `--dns-server`  | `FORWARD_DNS`    | 设置转发DNS服务器，即该服务收到指定后缀的DNS查询后，转发请求的目标服务器，默认docker内置DNS | `127.0.0.11`     |
-| `-P`   | `--port`        | `LISTEN_PORT`    | 设置服务的监听端口                                           | `53`             |
-| `-H`   | `--doh-port`    | `DOH_PORT`       | 设置 DoH/HTTP-DNS 监听端口（RFC 8484），生产环境需在前面加 TLS 反向代理 | `80`             |
-| `-K`   | `--keep-suffix` | `KEEP_SUFFIX`    | 控制转发DNS查询时是否保留后缀，转发到`127.0.0.11`时应去除后缀 | -                |
+| `-S`   | `--suffix`      | `SUFFIX_DOMAIN`  | 设置要转发域名的后缀。**空** = 转发*所有*域名；`none`/`off`/`any` 也表示空 | *空*（Docker 镜像设为 `.docker`） |
+| `-D`   | `--dns-server`  | `FORWARD_DNS`    | 设置转发 DNS 服务器，即该服务收到指定后缀的 DNS 查询后，转发请求的目标服务器 | `8.8.8.8`（Docker 镜像设为 `127.0.0.11`） |
+| `-P`   | `--port`        | `LISTEN_PORT`    | 设置 UDP 监听端口                                            | `53`             |
+| `-O`   | `--doh-port`    | `DOH_PORT`       | 设置 DoH/HTTP-DNS 监听端口（RFC 8484），生产环境需在前面加 TLS 反向代理 | `80`             |
+| `-H`   | `--hosts`       | `HOSTS_FILE`     | 本地 hosts 文件路径（标准 `/etc/hosts` 格式），在转发前优先查询 | `/etc/hosts`（Windows 为 `C:/Windows/System32/drivers/etc/hosts`） |
+| `-K`   | `--keep-suffix` | `KEEP_SUFFIX`    | 控制转发DNS查询时是否保留后缀，转发到`127.0.0.11`时应去除后缀 | 关闭             |
 | `-M`   | `--max-hops`    | `MAX_HOPS`       | 设置DNS查询的最大跳转（ hop ）次数，防止循环查询             | `3`              |
 | `-W`   | `--workers`     | `NUM_WORKERS`    | 设置服务的工作线程数                                         | `4`              |
+| `-C`   | `--container`   | `CONTAINER_NAME` | ⚠️ **已废弃。** 原先用于设置启动连通性探测的容器名，现已不再使用。 | `docker-dns`     |
 | `-f`   | `--foreground`  | -                | 以“前台模式”运行服务（不转入后台守护进程）                   | 未启用(默认后台) |
 | `-h`   | `--help`        | -                | 显示帮助信息（即当前选项列表及说明），然后退出命令           | -                |
+| `-v`   | `--version`     | -                | 显示版本与编译信息，然后退出命令                             | -                |
+
+> Docker 镜像通过 Dockerfile 内置的环境变量（`SUFFIX_DOMAIN=.docker`、`FORWARD_DNS=127.0.0.11`）还原原本的 Docker 行为，因此在容器内无需额外加任何参数，即可保持「仅 `.docker` 域名、转发至 Docker 内置 DNS」语义。
 
 ```bash
-root@VM-4-2-debian:~# ./docker-dns/docker-dns -h
-Usage: ./docker-dns [OPTIONS]
+$ docker-dns -h
+Usage: docker-dns [OPTIONS]
 Options:
   -L, --log-level    Set log level (DEBUG, default: INFO, WARN, ERROR, FATAL)
   -G, --gateway      Set gateway name (default: gateway)
-  -S, --suffix       Set suffix name (default: .docker)
-  -C, --container    Set container name (default: docker-dns)
-  -D, --dns-server   Set forward DNS server (default: 127.0.0.11)
+  -S, --suffix       Set suffix name (default: empty = forward ALL domains; 'none' also means empty)
+  -D, --dns-server   Set forward DNS server (default: 8.8.8.8)
   -P, --port         Set listening port (default: 53)
-  -H, --doh-port     Set DoH/HTTP listen port (default: 80)
+  -O, --doh-port     Set DoH/HTTP listen port (default: 80)
+  -H, --hosts        Set local hosts file path (default: /etc/hosts)
   -K, --keep-suffix  keep suffix forward dns query (default: strip)
   -M, --max-hops     Set maximum hop count (default: 3)
   -W, --workers      Set number of worker threads (default: 4)
   -f, --foreground   Run in foreground mode (do not daemonize)
   -h, --help         Show this help message and exit
+  -v, --version      Show version and exit
 
 Environment variable:
   Command-line arguments take precedence over environment variables.
   --log-level    =>  LOG_LEVEL
   --gateway      =>  GATEWAY_NAME
   --suffix       =>  SUFFIX_DOMAIN
-  --container    =>  CONTAINER_NAME
   --dns-server   =>  FORWARD_DNS
   --port         =>  LISTEN_PORT
   --doh-port     =>  DOH_PORT
+  --hosts        =>  HOSTS_FILE
   --keep-suffix  =>  KEEP_SUFFIX
   --max-hops     =>  MAX_HOPS
   --workers      =>  NUM_WORKERS
