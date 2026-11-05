@@ -4,6 +4,7 @@
 
 #define VERSION "1.1.2"
 #define LISTEN_PORT_ENV "LISTEN_PORT"
+#define DOH_PORT_ENV "DOH_PORT"
 #define FORWARD_DNS_ENV "FORWARD_DNS"
 #define GATEWAY_ENV "GATEWAY_NAME"
 #define CONTAINER_ENV "CONTAINER_NAME"
@@ -14,6 +15,7 @@
 #define NUM_WORKERS_ENV "NUM_WORKERS"
 
 #define LISTEN_PORT_DEFAULT 53
+#define DOH_PORT_DEFAULT 80
 #define FORWARD_DNS_DEFAULT "127.0.0.11"
 #define GATEWAY_DEFAULT "gateway"
 #define CONTAINER_DEFAULT "docker-dns"
@@ -28,6 +30,7 @@ extern int num_workers;
 extern int keep_suffix;
 extern int foreground;
 extern int listen_port;
+extern int doh_port;
 extern char forward_dns[16];
 extern char container_name[256];
 extern char gateway_name[64];

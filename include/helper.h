@@ -9,6 +9,7 @@ typedef enum {
     OPT_CONTAINER,
     OPT_DNS_SERVER,
     OPT_PORT,
+    OPT_DOH_PORT,
     OPT_KEEP_SUFFIX,
     OPT_MAX_HOPS,
     OPT_NUM_WORKERS,

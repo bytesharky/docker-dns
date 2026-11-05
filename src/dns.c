@@ -80,7 +80,7 @@ int is_match_suffix(const char *name) {
 
 // 移除尾部的点（FQDN）
 void strip_dot(char *name) {
-    if (!name) return;
+    if (!name) return NULL;
     size_t len = strlen(name);
     
     if (len > 0 && name[len-1] == '.') {
@@ -91,7 +91,7 @@ void strip_dot(char *name) {
 
 // 移除域名后缀
 void strip_suffix(char *name) {
-    if (!name) return;
+    if (!name) return NULL;
     size_t len = strlen(name);
 
     // 先移除尾部的点（FQDN）
@@ -157,45 +157,45 @@ ldns_pkt* modify_query_domain(ldns_pkt *original_pkt,  ldns_rdf *new_domain) {
     return new_pkt;
 }
 
-// 处理单个DNS查询
-void process_dns_query(int sockfd, const uint8_t *buf, ssize_t len,
-                        struct sockaddr_in *client, socklen_t client_len) {
+// 解析并处理单个 DNS 查询；返回响应报文（调用方释放），失败返回 NULL。
+// client 可为 NULL（DoH 路径无 UDP 客户端地址时使用）。
+ldns_pkt* resolve_dns_query(const uint8_t *buf, size_t len, const struct sockaddr_in *client) {
 
-    log_msg(LOG_DEBUG, "Processing DNS query from %s:%d (%zd bytes)", 
-                inet_ntoa(client->sin_addr), ntohs(client->sin_port), len);
+    log_msg(LOG_DEBUG, "Processing DNS query from %s (%zu bytes)", 
+                client ? inet_ntoa(client->sin_addr) : "(doh)", len);
 
     ldns_pkt *query_pkt = NULL;
     if (ldns_wire2pkt(&query_pkt, buf, len) != LDNS_STATUS_OK || !query_pkt) {
         log_msg(LOG_ERROR, "Failed to parse DNS query packet");
-        return;
+        return NULL;
     }
 
     ldns_rr_list *question = ldns_pkt_question(query_pkt);
     if (!question || ldns_rr_list_rr_count(question) == 0) { 
         log_msg(LOG_ERROR, "Failed to find questions in DNS query");
         ldns_pkt_free(query_pkt); 
-        return; 
+        return NULL; 
     }
 
     ldns_rr *qrr = ldns_rr_list_rr(question, 0);
     if (!qrr) {
         log_msg(LOG_ERROR, "Failed to get question RR");
         ldns_pkt_free(query_pkt);
-        return;
+        return NULL;
     }
 
     ldns_rdf *qname = ldns_rr_owner(qrr);
     if (!qname) {
         log_msg(LOG_ERROR, "Failed to get question name");
         ldns_pkt_free(query_pkt);
-        return;
+        return NULL;
     }
 
     char *qname_str = ldns_rdf2str(qname);
     if (!qname_str) {
         log_msg(LOG_ERROR, "Failed to convert question name to string");
         ldns_pkt_free(query_pkt);
-        return;
+        return NULL;
     }
 
     ldns_pkt *resp_pkt = NULL;
@@ -216,7 +216,7 @@ void process_dns_query(int sockfd, const uint8_t *buf, ssize_t len,
             // 然后检查是否是网关域名
             if (gateway_name[0] && is_gateway_domain(qname_str)) {
                 log_msg(LOG_DEBUG, "Handling gateway domain: %s", qname_str);
-                resp_pkt = handle_gateway_query(query_pkt, qrr, client->sin_addr);
+                resp_pkt = handle_gateway_query(query_pkt, qrr, client ? client->sin_addr : (struct in_addr){0});
             }
             // 其他匹配后缀的域名
             else {
@@ -238,7 +238,7 @@ void process_dns_query(int sockfd, const uint8_t *buf, ssize_t len,
                             free(modified_name);
                             free(qname_str);
                             ldns_pkt_free(query_pkt);
-                            return;
+                            return NULL;
                         }
                         
                         ldns_pkt *clone_pkt = modify_query_domain(query_pkt, rdf_name);
@@ -248,7 +248,7 @@ void process_dns_query(int sockfd, const uint8_t *buf, ssize_t len,
                         log_msg(LOG_INFO, "Forwarding %s query for '%s' from %s to %s",
                             ldns_rr_type2str(ldns_rr_get_type(qrr)),
                             modified_name,
-                            inet_ntoa(client->sin_addr),
+                            client ? inet_ntoa(client->sin_addr) : "(doh)",
                             forward_dns);
 
                         ldns_pkt *forward_resp = NULL;
@@ -361,28 +361,32 @@ void process_dns_query(int sockfd, const uint8_t *buf, ssize_t len,
         }
     }
 
-    if (resp_pkt) {
-        uint8_t *out = NULL;
-        size_t outlen = 0;
-        
-        if (ldns_pkt2wire(&out, resp_pkt, &outlen) == LDNS_STATUS_OK && out) {
-            ssize_t sent = sendto(sockfd, out, outlen, 0, 
-                                (struct sockaddr*)client, client_len);
-            if (sent == -1) {
-                log_msg(LOG_ERROR, "Failed to send response: %s", strerror(errno));
-            } else if (sent != outlen) {
-                log_msg(LOG_WARN, "Partial send: %zd of %zu bytes", sent, outlen);
-            } else {
-                log_msg(LOG_DEBUG, "Sent response (%zd bytes)", sent);
-            }
-            free(out);
-        } else {
-            log_msg(LOG_DEBUG, "Failed to serialize response packet");
-        }
-        
-        ldns_pkt_free(resp_pkt);
-    }
-    log_msg(LOG_DEBUG, "Finished processing query for '%s'", qname_str);
+    log_msg(LOG_DEBUG, "Finished processing query for %s", qname_str);
     free(qname_str);
     ldns_pkt_free(query_pkt);
+    return resp_pkt;
+}
+
+void process_dns_query(int sockfd, const uint8_t *buf, ssize_t len,
+                        struct sockaddr_in *client, socklen_t client_len) {
+    ldns_pkt *resp_pkt = resolve_dns_query(buf, (size_t)len, client);
+    if (!resp_pkt) return;
+
+    uint8_t *out = NULL;
+    size_t outlen = 0;
+    if (ldns_pkt2wire(&out, resp_pkt, &outlen) == LDNS_STATUS_OK && out) {
+        ssize_t sent = sendto(sockfd, out, outlen, 0,
+                              (struct sockaddr*)client, client_len);
+        if (sent == -1) {
+            log_msg(LOG_ERROR, "Failed to send response: %s", strerror(errno));
+        } else if (sent != (ssize_t)outlen) {
+            log_msg(LOG_WARN, "Partial send: %zd of %zu bytes", sent, outlen);
+        } else {
+            log_msg(LOG_DEBUG, "Sent response (%zd bytes)", sent);
+        }
+        free(out);
+    } else {
+        log_msg(LOG_DEBUG, "Failed to serialize response packet");
+    }
+    ldns_pkt_free(resp_pkt);
 }

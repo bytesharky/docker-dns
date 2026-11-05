@@ -12,6 +12,7 @@ int num_workers = NUM_WORKERS_DEFAULT;
 int keep_suffix = KEEP_SUFFIX_DEFAULT;
 int foreground = 0;
 int listen_port = LISTEN_PORT_DEFAULT;
+int doh_port = DOH_PORT_DEFAULT;
 char forward_dns[16] = FORWARD_DNS_DEFAULT;
 char container_name[256] = {0};
 char gateway_name[64] = {0};
@@ -37,6 +38,18 @@ void init_config_env(void) {
         free(env_port);
         if (listen_port <= 0 || listen_port > 65535){
             log_msg(LOG_FATAL, "Invalid port number %d", listen_port);
+            exit(1);
+        }
+    }
+
+    // DoH/HTTP 侦听端口号
+    int *env_doh_port;
+    env_doh_port = str2int(getenv(DOH_PORT_ENV));
+    if (env_doh_port != NULL) {
+        doh_port = *env_doh_port;
+        free(env_doh_port);
+        if (doh_port <= 0 || doh_port > 65535){
+            log_msg(LOG_FATAL, "Invalid DoH port number %d", doh_port);
             exit(1);
         }
     }
@@ -149,6 +162,26 @@ void init_config_argc(int argc, char *argv[]) {
                     }
                 } else {
                     log_msg(LOG_FATAL, "Invalid port number %s", argv_port);
+                    exit(1);
+                }
+                break;
+
+            case OPT_DOH_PORT:
+                if (i + 1 >= argc) {
+                    log_msg(LOG_FATAL, "--doh-port requires a value");
+                    exit(1);
+                }
+                char *argv_doh_port = argv[++i];
+                int *argv_doh_listen_port = str2int(argv_doh_port);
+                if (argv_doh_listen_port != NULL){
+                    doh_port = *argv_doh_listen_port;
+                    free(argv_doh_listen_port);
+                    if (doh_port <= 0 || doh_port > 65535) {
+                        log_msg(LOG_FATAL, "Invalid number of DoH port. Must be between 1 and 65535.");
+                        exit(1);
+                    }
+                } else {
+                    log_msg(LOG_FATAL, "Invalid DoH port number %s", argv_doh_port);
                     exit(1);
                 }
                 break;

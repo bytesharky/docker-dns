@@ -15,6 +15,7 @@ void print_help(const char *progname) {
     printf("  -C, --container    Set container name (default: %s)\n", CONTAINER_DEFAULT);
     printf("  -D, --dns-server   Set forward DNS server (default: %s)\n", FORWARD_DNS_DEFAULT);
     printf("  -P, --port         Set listening port (default: %d)\n", LISTEN_PORT_DEFAULT);
+    printf("  -H, --doh-port     Set DoH/HTTP listen port (default: %d)\n", DOH_PORT_DEFAULT);
     printf("  -K, --keep-suffix  keep suffix forward dns query (default: %s)\n", KEEP_SUFFIX_DEFAULT ? "keep" : "strip");
     printf("  -M, --max-hops     Set maximum hop count (default: %d)\n", MAX_HOPS_DEFAULT);
     printf("  -W, --workers      Set number of worker threads (default: %d)\n", NUM_WORKERS_DEFAULT);
@@ -30,6 +31,7 @@ void print_help(const char *progname) {
     printf("  --container    =>  CONTAINER_NAME\n");
     printf("  --dns-server   =>  FORWARD_DNS\n");
     printf("  --port         =>  LISTEN_PORT\n");
+    printf("  --doh-port     =>  DOH_PORT\n");
     printf("  --keep-suffix  =>  KEEP_SUFFIX\n");
     printf("  --max-hops     =>  MAX_HOPS\n");
     printf("  --workers      =>  NUM_WORKERS\n");
@@ -60,6 +62,7 @@ OptionType get_option_type(const char* arg) {
             case 'C': return OPT_CONTAINER;
             case 'D': return OPT_DNS_SERVER;
             case 'P': return OPT_PORT;
+            case 'H': return OPT_DOH_PORT;
             case 'K': return OPT_KEEP_SUFFIX;
             case 'M': return OPT_MAX_HOPS;
             case 'W': return OPT_NUM_WORKERS;
@@ -76,6 +79,7 @@ OptionType get_option_type(const char* arg) {
         if (strcmp(opt, "container") == 0)    return OPT_CONTAINER;
         if (strcmp(opt, "dns-server") == 0)   return OPT_DNS_SERVER;
         if (strcmp(opt, "port") == 0)         return OPT_PORT;
+        if (strcmp(opt, "doh-port") == 0)     return OPT_DOH_PORT;
         if (strcmp(opt, "keep-suffix") == 0)  return OPT_KEEP_SUFFIX;
         if (strcmp(opt, "max-hops") == 0)     return OPT_MAX_HOPS;
         if (strcmp(opt, "workers") == 0)      return OPT_NUM_WORKERS;

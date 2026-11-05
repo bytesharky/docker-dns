@@ -1,6 +1,7 @@
 #include "config.h"      // for init_config_argc, init_config_env, listen_port
 #include "daemon.h"      // for daemonize
 #include "dns.h"         // for process_dns_query, test_forward_dns
+#include "doh.h"         // for doh_server_thread
 #include "gateway.h"     // for resolve_gateway_ip
 #include "logging.h"     // for log_msg, LOG_INFO, LOG_FATAL, LOG_WARN, log_...
 #include "queue.h"       // for dns_request_t, dequeue_request, enqueue_request
@@ -111,6 +112,14 @@ int main(int argc, char *argv[]) {
         pthread_t tid;
         pthread_create(&tid, NULL, worker_thread, &sockfd);
         pthread_detach(tid);
+    }
+
+    /* 启动内置 DoH / HTTP-DNS 服务器线程（复用同一份解析逻辑） */
+    pthread_t doh_tid;
+    if (pthread_create(&doh_tid, NULL, doh_server_thread, NULL) == 0) {
+        pthread_detach(doh_tid);
+    } else {
+        log_msg(LOG_WARN, "Failed to start DoH/HTTP server thread");
     }
 
     while (!stop) {
