@@ -614,7 +614,9 @@ static void *handle_client(void *arg) {
 /* ----------------------- DoH 服务器线程 ----------------------- */
 void* doh_server_thread(void *arg) {
     (void)arg;
+#ifndef _WIN32
     signal(SIGPIPE, SIG_IGN);
+#endif
 
     int lfd = socket(AF_INET, SOCK_STREAM, 0);
     if (lfd < 0) {

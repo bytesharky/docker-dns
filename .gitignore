@@ -1,3 +1,5 @@
 .vscode/
 .VSCodeCounter/
 .vs/
+# 构建时临时生成的 Dockerfile（docker-build.sh 用 -f 指定变体模板）
+.Dockerfile.*

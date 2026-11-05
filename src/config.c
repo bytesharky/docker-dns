@@ -27,6 +27,13 @@ void init_config_env(void) {
     log_level = parse_log_level(getenv(LOG_LEVEL_ENV), LOG_INFO);
     read_env(GATEWAY_ENV, GATEWAY_DEFAULT, gateway_name, sizeof(gateway_name));
     read_env(SUFFIX_ENV, SUFFIX_DEFAULT, suffix_domain, sizeof(suffix_domain));
+    // 环境变量 SUFFIX_DOMAIN 也可设为 none/off/any/- 表示无后缀（转发所有域名）
+    if (strcmp(suffix_domain, "none") == 0 ||
+        strcmp(suffix_domain, "off")  == 0 ||
+        strcmp(suffix_domain, "any")  == 0 ||
+        strcmp(suffix_domain, "-")    == 0) {
+        suffix_domain[0] = '\0';
+    }
     read_env(FORWARD_DNS_ENV, FORWARD_DNS_DEFAULT, forward_dns, sizeof(forward_dns));
 
     // 获取主机名(容器短ID)
@@ -132,8 +139,21 @@ void init_config_argc(int argc, char *argv[]) {
                     log_msg(LOG_FATAL, "--suffix requires a value");
                     exit(1);
                 }
-                strncpy(suffix_domain, argv[++i], sizeof(suffix_domain) - 1);
-                suffix_domain[sizeof(suffix_domain) - 1] = '\0';
+                {
+                    const char *sv = argv[++i];
+                    // 哨兵值：none/off/any/- 均表示“无后缀，转发所有域名”
+                    // （空字符串 "" 同样表示无后缀，兼容 bash 传参）
+                    if (sv[0] == '\0' ||
+                        strcmp(sv, "none") == 0 ||
+                        strcmp(sv, "off")  == 0 ||
+                        strcmp(sv, "any")  == 0 ||
+                        strcmp(sv, "-")    == 0) {
+                        suffix_domain[0] = '\0';
+                    } else {
+                        strncpy(suffix_domain, sv, sizeof(suffix_domain) - 1);
+                        suffix_domain[sizeof(suffix_domain) - 1] = '\0';
+                    }
+                }
                 break;
 
             case OPT_CONTAINER:

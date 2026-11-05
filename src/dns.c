@@ -79,7 +79,7 @@ int is_match_suffix(const char *name) {
 
 // 移除尾部的点（FQDN）
 void strip_dot(char *name) {
-    if (!name) return NULL;
+    if (!name) return;
     size_t len = strlen(name);
     
     if (len > 0 && name[len-1] == '.') {
@@ -90,7 +90,7 @@ void strip_dot(char *name) {
 
 // 移除域名后缀
 void strip_suffix(char *name) {
-    if (!name) return NULL;
+    if (!name) return;
     size_t len = strlen(name);
 
     // 先移除尾部的点（FQDN）

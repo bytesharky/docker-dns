@@ -11,7 +11,7 @@ void print_help(const char *progname) {
     printf("Options:\n");
     printf("  -L, --log-level    Set log level (DEBUG, default: INFO, WARN, ERROR, FATAL)\n");
     printf("  -G, --gateway      Set gateway name (default: %s)\n", GATEWAY_DEFAULT);
-    printf("  -S, --suffix       Set suffix name (default: %s)\n", SUFFIX_DEFAULT);
+    printf("  -S, --suffix       Set suffix name (default: empty = forward ALL domains; 'none' also means empty)\n");
     printf("  -D, --dns-server   Set forward DNS server (default: %s)\n", FORWARD_DNS_DEFAULT);
     printf("  -P, --port         Set listening port (default: %d)\n", LISTEN_PORT_DEFAULT);
     printf("  -H, --doh-port     Set DoH/HTTP listen port (default: %d)\n", DOH_PORT_DEFAULT);
@@ -74,6 +74,7 @@ OptionType get_option_type(const char* arg) {
         const char* opt = arg + 2;
         if (strcmp(opt, "log-level") == 0)    return OPT_LOG_LEVEL;
         if (strcmp(opt, "gateway") == 0)      return OPT_GATEWAY;
+        if (strcmp(opt, "suffix") == 0)       return OPT_SUFFIX;
         if (strcmp(opt, "container") == 0)    return OPT_CONTAINER;
         if (strcmp(opt, "dns-server") == 0)   return OPT_DNS_SERVER;
         if (strcmp(opt, "port") == 0)         return OPT_PORT;

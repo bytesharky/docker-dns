@@ -2,7 +2,7 @@
 #define CONFIG_H
 #include <stddef.h>  // for size_t
 
-#define VERSION "1.1.3"
+#define VERSION "1.2.0"
 #define LISTEN_PORT_ENV "LISTEN_PORT"
 #define DOH_PORT_ENV "DOH_PORT"
 #define FORWARD_DNS_ENV "FORWARD_DNS"
@@ -16,9 +16,10 @@
 
 #define LISTEN_PORT_DEFAULT 53
 #define DOH_PORT_DEFAULT 80
-#define FORWARD_DNS_DEFAULT "127.0.0.11"
+#define FORWARD_DNS_DEFAULT "8.8.8.8"
 #define GATEWAY_DEFAULT "gateway"
-#define SUFFIX_DEFAULT ".docker"
+// 默认空后缀：开箱即转发所有域名（Docker 镜像通过环境变量 SUFFIX_DOMAIN=.docker 还原 Docker 行为）
+#define SUFFIX_DEFAULT ""
 #define LOG_LEVEL_DEFAULT LOG_INFO
 #define KEEP_SUFFIX_DEFAULT 0
 #define MAX_HOPS_DEFAULT 3

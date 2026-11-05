@@ -87,16 +87,21 @@ cd "$SCRIPT_DIR" || exit
 
 echo "$LANG_BUILDING_IMAGE"
 
-rm -f Dockerfile
-
-cp Dockerfile-${TAG} Dockerfile
+# 直接用 -f 指定变体模板，不再复制成本地 Dockerfile；
+# 国内镜像源开关在临时副本上处理，避免污染源模板。
+DOCKERFILE_TMP=".Dockerfile.${TAG}"
+if [ ! -f "Dockerfile-${TAG}" ]; then
+    echo "错误：未找到 Dockerfile-${TAG} 模板"
+    exit 1
+fi
+cp "Dockerfile-${TAG}" "$DOCKERFILE_TMP"
 
 if [ "$LANGUAGE" = "zh" ]; then
     while true; do
         read -p "是否使用国内镜像源? (Y/N) " MIRRORS
         case $MIRRORS in
             [Yy] )
-                sed -i 's/^# MIRRORS //g' ./Dockerfile
+                sed -i 's/^# MIRRORS //g' "$DOCKERFILE_TMP"
                 break
                 ;;
             [Nn] ) 
@@ -111,7 +116,10 @@ fi
 
 echo TZ=$HOST_TZ
 
-docker build --build-arg HOST_TZ=$HOST_TZ $2 -t ${IMAGE}:${TAG} .
+docker build -f "$DOCKERFILE_TMP" --build-arg HOST_TZ=$HOST_TZ $2 -t ${IMAGE}:${TAG} .
+
+# 清理临时 Dockerfile
+rm -f "$DOCKERFILE_TMP"
 
 echo "$LANG_BUILD_COMPLETE"
 

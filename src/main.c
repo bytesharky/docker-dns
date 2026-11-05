@@ -33,6 +33,19 @@ void* worker_thread(void *arg) {
 // 主程序入口
 int main(int argc, char *argv[]) {
 
+#ifdef _WIN32
+    /* Winsock 必须先初始化，否则所有 socket() 调用都会失败。
+     * 守护进程会重新拉起自身（CreateProcessW），每个子进程都会重新执行 main()，
+     * 因此在这里初始化即可覆盖前后台两种运行模式。 */
+    {
+        WSADATA wsaData;
+        if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+            fprintf(stderr, "WSAStartup failed (%d)\n", WSAGetLastError());
+            return 1;
+        }
+    }
+#endif
+
     init_config_env();
 
     init_config_argc(argc, argv);
@@ -129,23 +142,35 @@ int main(int argc, char *argv[]) {
         dns_request_t req;
         req.client_len = sizeof(req.client_addr);
 
-        ssize_t n = recvfrom(sockfd, req.data, sizeof(req.data), 0, 
+        ssize_t n = recvfrom(sockfd, req.data, sizeof(req.data), 0,
                             (struct sockaddr*)&req.client_addr, &req.client_len);
-        if (n <= 0) {
-            if (errno == EINTR ||
-                errno == EAGAIN || 
-                errno == EWOULDBLOCK) continue;
-            log_msg(LOG_ERROR, "Failed to receive data: %s", strerror(errno));
-            break;
+        if (n > 0) {
+            req.len = n;
+            enqueue_request(&req);
+
+            log_msg(LOG_DEBUG, "Received DNS query from %s:%d (%zd bytes)",
+                inet_ntoa(req.client_addr.sin_addr),  // 客户端IP字符串
+                ntohs(req.client_addr.sin_port),      // 客户端端口（网络字节序转主机序）
+                n);                                   // 接收的字节数
+            continue;
         }
 
-        req.len = n;
-        enqueue_request(&req);
-
-        log_msg(LOG_DEBUG, "Received DNS query from %s:%d (%zd bytes)", 
-            inet_ntoa(req.client_addr.sin_addr),  // 客户端IP字符串
-            ntohs(req.client_addr.sin_port),      // 客户端端口（网络字节序转主机序）
-            n);                                   // 接收的字节数);
+        /* n <= 0：超时或出错。
+         * 对 UDP 监听器而言，SO_RCVTIMEO 触发的超时属于正常情况，必须继续等待。
+         * POSIX 下超时表现为 EAGAIN/EWOULDBLOCK/EINTR；Windows 下 recvfrom 超时
+         * 表现为 WSAETIMEDOUT（MinGW 有时不会改写 errno，残留之前 fopen 的 ENOENT），
+         * 因此不能把“读不到数据”视为致命错误——除非 stop 已被置位。 */
+        if (n == 0) continue;
+#ifdef _WIN32
+        if (WSAGetLastError() == WSAETIMEDOUT) continue;
+        log_msg(LOG_DEBUG, "recvfrom returned -1 (errno=%d, WSA=%d), continuing",
+                errno, WSAGetLastError());
+        continue;
+#else
+        if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) continue;
+        log_msg(LOG_ERROR, "Failed to receive data: %s", strerror(errno));
+        break;
+#endif
     }
 
     log_msg(LOG_INFO, "Shutting down gracefully");

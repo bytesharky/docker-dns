@@ -60,6 +60,10 @@ COPY --from=builder /app/docker-dns /docker-dns
 EXPOSE 53/udp
 EXPOSE 80/tcp
 
+# Docker 环境还原为「仅处理 *.docker 后缀、转发到 Docker 内嵌 DNS」的默认行为
+ENV SUFFIX_DOMAIN=.docker
+ENV FORWARD_DNS=127.0.0.11
+
 # 健康检查
 HEALTHCHECK --interval=10s --timeout=3s --start-period=15s \
   CMD ["/docker-dns", "--healthy"]
