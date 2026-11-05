@@ -1,5 +1,6 @@
 #include "config.h"          // for forward_dns, suffix_domain, container_name
 #include "gateway.h"         // for handle_gateway_query, is_gateway_domain
+#include "hosts.h"           // for hosts_lookup, HOSTS_TTL
 #include "logging.h"         // for log_msg, LOG_DEBUG, LOG_ERROR, LOG_WARN
 #include "loop_marker.h"     // for add_loop_marker, get_loop_marker
 #include <arpa/inet.h>       // for inet_ntoa, ntohs
@@ -207,11 +208,47 @@ ldns_pkt* resolve_dns_query(const uint8_t *buf, size_t len, const struct sockadd
         log_msg(LOG_DEBUG, "Query for: '%s', Type: %s, ID: %d", qname_str,
                     ldns_rr_type2str(ldns_rr_get_type(qrr)), ldns_pkt_id(query_pkt));
 
+        // 本地 hosts 文件优先解析（覆盖后缀门控，对任意域名生效，行为同 /etc/hosts）
+        if (!resp_pkt) {
+            ldns_rr_type qtype = ldns_rr_get_type(qrr);
+            int want_family = (qtype == LDNS_RR_TYPE_A)     ? AF_INET :
+                              (qtype == LDNS_RR_TYPE_AAAA)  ? AF_INET6 : 0;
+            if (want_family != 0) {
+                char hosts_ips[8][46];
+                int nh = hosts_lookup(qname_str, want_family, hosts_ips, 8);
+                if (nh > 0) {
+                    log_msg(LOG_INFO, "Local hosts hit for '%s' (%d entry)", qname_str, nh);
+                    resp_pkt = ldns_pkt_new();
+                    if (resp_pkt) {
+                        ldns_pkt_set_id(resp_pkt, ldns_pkt_id(query_pkt));
+                        ldns_pkt_set_qr(resp_pkt, 1);
+                        ldns_pkt_set_aa(resp_pkt, 1);
+                        ldns_pkt_set_rcode(resp_pkt, LDNS_RCODE_NOERROR);
+                        ldns_pkt_push_rr(resp_pkt, LDNS_SECTION_QUESTION, ldns_rr_clone(qrr));
+                        ldns_rdf_type rdf_type = (qtype == LDNS_RR_TYPE_AAAA)
+                                                 ? LDNS_RDF_TYPE_AAAA : LDNS_RDF_TYPE_A;
+                        for (int k = 0; k < nh; k++) {
+                            ldns_rr *arr = ldns_rr_new();
+                            if (!arr) break;
+                            ldns_rr_set_owner(arr, ldns_rdf_clone(qname));
+                            ldns_rr_set_type(arr, qtype);
+                            ldns_rr_set_class(arr, LDNS_RR_CLASS_IN);
+                            ldns_rr_set_ttl(arr, HOSTS_TTL);
+                            ldns_rdf *rdf = ldns_rdf_new_frm_str(rdf_type, hosts_ips[k]);
+                            if (!rdf) { ldns_rr_free(arr); break; }
+                            ldns_rr_push_rdf(arr, rdf);
+                            ldns_pkt_push_rr(resp_pkt, LDNS_SECTION_ANSWER, arr);
+                        }
+                    }
+                }
+            }
+        }
+
         // 首先检查是否是配后缀的域名
-        if (!is_match_suffix(qname_str)) {
+        if (!resp_pkt && !is_match_suffix(qname_str)) {
             log_msg(LOG_DEBUG, "Not a %s domain, returning REFUSED", suffix_domain);
-        } 
-        else {
+        }
+        else if (!resp_pkt) {
             // 然后检查是否是网关域名
             if (gateway_name[0] && is_gateway_domain(qname_str)) {
                 log_msg(LOG_DEBUG, "Handling gateway domain: %s", qname_str);

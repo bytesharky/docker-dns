@@ -13,6 +13,7 @@ typedef enum {
     OPT_KEEP_SUFFIX,
     OPT_MAX_HOPS,
     OPT_NUM_WORKERS,
+    OPT_HOSTS,
     OPT_FOREGROUND,
     OPT_HELP,
     OPT_VERSION,

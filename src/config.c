@@ -19,6 +19,7 @@ char forward_dns[16] = FORWARD_DNS_DEFAULT;
 char container_name[256] = {0};
 char gateway_name[64] = {0};
 char suffix_domain[64] = {0};
+char hosts_path[256] = {0};
 
 // 初始化配置(环境变量)
 void init_config_env(void) {
@@ -35,6 +36,7 @@ void init_config_env(void) {
         suffix_domain[0] = '\0';
     }
     read_env(FORWARD_DNS_ENV, FORWARD_DNS_DEFAULT, forward_dns, sizeof(forward_dns));
+    read_env(HOSTS_FILE_ENV, HOSTS_FILE_DEFAULT, hosts_path, sizeof(hosts_path));
 
     // 获取主机名(容器短ID)
     if (gethostname(container_name, sizeof(container_name)) != 0)
@@ -255,6 +257,15 @@ void init_config_argc(int argc, char *argv[]) {
                 } else {
                     log_msg(LOG_FATAL, "Invalid workers number %d", argv_workers);
                 }
+                break;
+
+            case OPT_HOSTS:
+                if (i + 1 >= argc) {
+                    log_msg(LOG_FATAL, "--hosts requires a value");
+                    exit(1);
+                }
+                strncpy(hosts_path, argv[++i], sizeof(hosts_path) - 1);
+                hosts_path[sizeof(hosts_path) - 1] = '\0';
                 break;
                 
             case OPT_HELP:

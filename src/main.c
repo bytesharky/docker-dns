@@ -1,5 +1,6 @@
 #include "config.h"      // for init_config_argc, init_config_env, listen_port
 #include "daemon.h"      // for daemonize
+#include "hosts.h"       // for hosts_load
 #include "dns.h"         // for process_dns_query, test_forward_dns
 #include "doh.h"         // for doh_server_thread
 #include "gateway.h"     // for resolve_gateway_ip
@@ -49,6 +50,10 @@ int main(int argc, char *argv[]) {
     init_config_env();
 
     init_config_argc(argc, argv);
+
+    /* 加载本地 hosts 文件（路径来自 --hosts / HOSTS_FILE，默认按平台取 /etc/hosts
+     * 或 Windows 的 drivers/etc/hosts）。文件不存在时只打 WARN，不影响启动。 */
+    hosts_load(hosts_path);
 
     if (!foreground) daemonize();
 

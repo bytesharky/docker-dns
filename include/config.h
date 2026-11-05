@@ -13,6 +13,7 @@
 #define KEEP_SUFFIX_ENV "KEEP_SUFFIX"
 #define MAX_HOPS_ENV "MAX_HOPS"
 #define NUM_WORKERS_ENV "NUM_WORKERS"
+#define HOSTS_FILE_ENV "HOSTS_FILE"
 
 #define LISTEN_PORT_DEFAULT 53
 #define DOH_PORT_DEFAULT 80
@@ -25,6 +26,13 @@
 #define MAX_HOPS_DEFAULT 3
 #define NUM_WORKERS_DEFAULT 4
 
+// 本地 hosts 文件默认路径（本地覆盖解析，优先级高于上游转发）
+#ifdef _WIN32
+#define HOSTS_FILE_DEFAULT "C:/Windows/System32/drivers/etc/hosts"
+#else
+#define HOSTS_FILE_DEFAULT "/etc/hosts"
+#endif
+
 extern int max_hops;
 extern int num_workers;
 extern int keep_suffix;
@@ -35,6 +43,7 @@ extern char forward_dns[16];
 extern char container_name[256];
 extern char gateway_name[64];
 extern char suffix_domain[64];
+extern char hosts_path[256];
 
 void init_config_env(void);
 void init_config_argc(int argc, char *argv[]);
