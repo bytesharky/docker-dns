@@ -25,6 +25,8 @@
 #define KEEP_SUFFIX_DEFAULT 0
 #define MAX_HOPS_DEFAULT 3
 #define NUM_WORKERS_DEFAULT 4
+// 本机 loopback 反向查询（PTR）应答的名字
+#define PTR_NAME_DEFAULT "dns_forwarder.sharky.localhost"
 
 // 本地 hosts 文件默认路径（本地覆盖解析，优先级高于上游转发）
 #ifdef _WIN32

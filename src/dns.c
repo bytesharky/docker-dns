@@ -208,9 +208,10 @@ ldns_pkt* resolve_dns_query(const uint8_t *buf, size_t len, const struct sockadd
         log_msg(LOG_DEBUG, "Query for: '%s', Type: %s, ID: %d", qname_str,
                     ldns_rr_type2str(ldns_rr_get_type(qrr)), ldns_pkt_id(query_pkt));
 
+        ldns_rr_type qtype = ldns_rr_get_type(qrr);
+
         // 本地 hosts 文件优先解析（覆盖后缀门控，对任意域名生效，行为同 /etc/hosts）
         if (!resp_pkt) {
-            ldns_rr_type qtype = ldns_rr_get_type(qrr);
             int want_family = (qtype == LDNS_RR_TYPE_A)     ? AF_INET :
                               (qtype == LDNS_RR_TYPE_AAAA)  ? AF_INET6 : 0;
             if (want_family != 0) {
@@ -241,6 +242,45 @@ ldns_pkt* resolve_dns_query(const uint8_t *buf, size_t len, const struct sockadd
                         }
                     }
                 }
+            }
+        }
+
+        // PTR 反向解析：nslookup 等客户端会先对 DNS 服务器自身地址做 PTR 查询，
+        // 若不应答则显示 "UnKnown"。对 loopback 的反向域名直接回 PTR localhost。
+        if (!resp_pkt && qtype == LDNS_RR_TYPE_PTR) {
+            char *ptr_name = strdup(qname_str);
+            if (ptr_name) {
+                strip_dot(ptr_name);
+                int is_loopback =
+                    strcasecmp(ptr_name, "1.0.0.127.in-addr.arpa") == 0 ||
+                    strcasecmp(ptr_name,
+                        "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa") == 0;
+                if (is_loopback) {
+                    log_msg(LOG_INFO, "Local PTR hit for '%s' -> %s", ptr_name, PTR_NAME_DEFAULT);
+                    resp_pkt = ldns_pkt_new();
+                    if (resp_pkt) {
+                        ldns_pkt_set_id(resp_pkt, ldns_pkt_id(query_pkt));
+                        ldns_pkt_set_qr(resp_pkt, 1);
+                        ldns_pkt_set_aa(resp_pkt, 1);
+                        ldns_pkt_set_rcode(resp_pkt, LDNS_RCODE_NOERROR);
+                        ldns_pkt_push_rr(resp_pkt, LDNS_SECTION_QUESTION, ldns_rr_clone(qrr));
+                        ldns_rr *ptr = ldns_rr_new();
+                        if (ptr) {
+                            ldns_rr_set_owner(ptr, ldns_rdf_clone(qname));
+                            ldns_rr_set_type(ptr, LDNS_RR_TYPE_PTR);
+                            ldns_rr_set_class(ptr, LDNS_RR_CLASS_IN);
+                            ldns_rr_set_ttl(ptr, 300);
+                            ldns_rdf *dname = NULL;
+                            if (ldns_str2rdf_dname(&dname, PTR_NAME_DEFAULT ".") == LDNS_STATUS_OK && dname) {
+                                ldns_rr_push_rdf(ptr, dname);
+                                ldns_pkt_push_rr(resp_pkt, LDNS_SECTION_ANSWER, ptr);
+                            } else {
+                                ldns_rr_free(ptr);
+                            }
+                        }
+                    }
+                }
+                free(ptr_name);
             }
         }
 
