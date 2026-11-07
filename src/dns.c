@@ -157,12 +157,30 @@ ldns_pkt* modify_query_domain(ldns_pkt *original_pkt,  ldns_rdf *new_domain) {
     return new_pkt;
 }
 
+// 把通用 socket 地址格式化为可读字符串（IPv4/IPv6 通用）。
+const char *addr_to_str(const struct sockaddr *sa, char *buf, size_t buflen) {
+    if (!sa || buflen < 8) return "(badaddr)";
+    if (sa->sa_family == AF_INET) {
+        const struct sockaddr_in *s = (const struct sockaddr_in *)sa;
+        if (!inet_ntop(AF_INET, &s->sin_addr, buf, (socklen_t)buflen))
+            snprintf(buf, buflen, "(err)");
+    } else if (sa->sa_family == AF_INET6) {
+        const struct sockaddr_in6 *s = (const struct sockaddr_in6 *)sa;
+        if (!inet_ntop(AF_INET6, &s->sin6_addr, buf, (socklen_t)buflen))
+            snprintf(buf, buflen, "(err)");
+    } else {
+        snprintf(buf, buflen, "(fam:%d)", sa->sa_family);
+    }
+    return buf;
+}
+
 // 解析并处理单个 DNS 查询；返回响应报文（调用方释放），失败返回 NULL。
 // client 可为 NULL（DoH 路径无 UDP 客户端地址时使用）。
-ldns_pkt* resolve_dns_query(const uint8_t *buf, size_t len, const struct sockaddr_in *client) {
+ldns_pkt* resolve_dns_query(const uint8_t *buf, size_t len, const struct sockaddr *client) {
 
+    char ipbuf[INET6_ADDRSTRLEN];
     log_msg(LOG_DEBUG, "Processing DNS query from %s (%zu bytes)", 
-                client ? inet_ntoa(client->sin_addr) : "(doh)", len);
+                client ? addr_to_str(client, ipbuf, sizeof ipbuf) : "(doh)", len);
 
     ldns_pkt *query_pkt = NULL;
     if (ldns_wire2pkt(&query_pkt, buf, len) != LDNS_STATUS_OK || !query_pkt) {
@@ -292,7 +310,10 @@ ldns_pkt* resolve_dns_query(const uint8_t *buf, size_t len, const struct sockadd
             // 然后检查是否是网关域名
             if (gateway_name[0] && is_gateway_domain(qname_str)) {
                 log_msg(LOG_DEBUG, "Handling gateway domain: %s", qname_str);
-                resp_pkt = handle_gateway_query(query_pkt, qrr, client ? client->sin_addr : (struct in_addr){0});
+                struct in_addr cli4 = {0};
+                if (client && client->sa_family == AF_INET)
+                    cli4 = ((const struct sockaddr_in *)client)->sin_addr;
+                resp_pkt = handle_gateway_query(query_pkt, qrr, cli4);
             }
             // 其他匹配后缀的域名
             else {
@@ -343,11 +364,12 @@ ldns_pkt* resolve_dns_query(const uint8_t *buf, size_t len, const struct sockadd
                             }
                         } else {
                             // 转发DNS请求
+                            char ipbuf2[INET6_ADDRSTRLEN];
                             log_msg(LOG_INFO, "Forwarding %s(%d) query for '%s' from %s to %s",
                                 ldns_rr_type2str(ldns_rr_get_type(qrr)),
                                 ldns_rr_get_type(qrr),
                                 modified_name,
-                                client ? inet_ntoa(client->sin_addr) : "(doh)",
+                                addr_to_str(client, ipbuf2, sizeof ipbuf2),
                                 forward_dns);
 
                             ldns_pkt *forward_resp = NULL;
@@ -467,7 +489,7 @@ ldns_pkt* resolve_dns_query(const uint8_t *buf, size_t len, const struct sockadd
 }
 
 void process_dns_query(int sockfd, const uint8_t *buf, ssize_t len,
-                        struct sockaddr_in *client, socklen_t client_len) {
+                        struct sockaddr *client, socklen_t client_len) {
     ldns_pkt *resp_pkt = resolve_dns_query(buf, (size_t)len, client);
     if (!resp_pkt) return;
 

@@ -38,6 +38,11 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#ifdef _WIN32
+#include <winsock2.h>     // Windows: select / fd_set / FD_* 由 winsock2.h 提供
+#else
+#include <sys/select.h>  // POSIX: select / fd_set 由 sys/select.h 提供
+#endif
 #include <sys/time.h>
 #include <ldns/ldns.h>
 
@@ -611,6 +616,52 @@ static void *handle_client(void *arg) {
     return NULL;
 }
 
+/* 创建并绑定一个 TCP 监听 socket（DoH 用）。成功返回 fd，失败返回 -1（调用方降级处理）。 */
+static int create_tcp_listener(int family, int port, const char *fam_name) {
+    int fd = socket(family, SOCK_STREAM, 0);
+    if (fd < 0) {
+        log_msg(LOG_WARN, "DoH: failed to create %s socket: %s", fam_name, strerror(errno));
+        return -1;
+    }
+    int yes = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof yes);
+
+#ifdef IPV6_V6ONLY
+    if (family == AF_INET6) {
+        int only = 1;
+        setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &only, sizeof only);
+    }
+#endif
+
+    int ok = 0;
+    if (family == AF_INET) {
+        struct sockaddr_in a;
+        memset(&a, 0, sizeof a);
+        a.sin_family = AF_INET;
+        a.sin_addr.s_addr = INADDR_ANY;
+        a.sin_port = htons((uint16_t)port);
+        ok = (bind(fd, (struct sockaddr *)&a, sizeof a) == 0);
+    } else {
+        struct sockaddr_in6 a;
+        memset(&a, 0, sizeof a);
+        a.sin6_family = AF_INET6;
+        a.sin6_port = htons((uint16_t)port);   // sin6_addr 全 0 == in6addr_any
+        ok = (bind(fd, (struct sockaddr *)&a, sizeof a) == 0);
+    }
+    if (!ok) {
+        log_msg(LOG_WARN, "DoH: failed to bind %s port %d: %s", fam_name, port, strerror(errno));
+        close(fd);
+        return -1;
+    }
+    if (listen(fd, 128) < 0) {
+        log_msg(LOG_WARN, "DoH: listen %s failed: %s", fam_name, strerror(errno));
+        close(fd);
+        return -1;
+    }
+    log_msg(LOG_INFO, "DoH: %s listener bound to port %d", fam_name, port);
+    return fd;
+}
+
 /* ----------------------- DoH 服务器线程 ----------------------- */
 void* doh_server_thread(void *arg) {
     (void)arg;
@@ -618,47 +669,65 @@ void* doh_server_thread(void *arg) {
     signal(SIGPIPE, SIG_IGN);
 #endif
 
-    int lfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (lfd < 0) {
-        log_msg(LOG_FATAL, "DoH: failed to create socket: %s", strerror(errno));
+    // 双栈监听：IPv4 与 IPv6 各自独立绑定（IPV6_V6ONLY=1），IPv6 不可用时降级仅 IPv4。
+    int lsocks[2];
+    int nlsocks = 0;
+    int l4 = create_tcp_listener(AF_INET,  doh_port, "IPv4");
+    if (l4 >= 0) lsocks[nlsocks++] = l4;
+    int l6 = create_tcp_listener(AF_INET6, doh_port, "IPv6");
+    if (l6 >= 0) lsocks[nlsocks++] = l6;
+
+    if (nlsocks == 0) {
+        log_msg(LOG_FATAL, "DoH: failed to create any listen socket on port %d", doh_port);
         return NULL;
     }
-    int yes = 1;
-    setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof yes);
-
-    struct sockaddr_in sa;
-    memset(&sa, 0, sizeof sa);
-    sa.sin_family = AF_INET;
-    sa.sin_addr.s_addr = INADDR_ANY;
-    sa.sin_port = htons((uint16_t)doh_port);
-
-    if (bind(lfd, (struct sockaddr *)&sa, sizeof sa) < 0) {
-        log_msg(LOG_FATAL, "DoH: failed to bind port %d: %s", doh_port, strerror(errno));
-        close(lfd);
-        return NULL;
-    }
-    if (listen(lfd, 128) < 0) {
-        log_msg(LOG_FATAL, "DoH: listen failed: %s", strerror(errno));
-        close(lfd);
-        return NULL;
+    if (nlsocks == 1) {
+        log_msg(LOG_WARN, "DoH: only %s listener active (dual-stack unavailable)",
+                lsocks[0] == l4 ? "IPv4" : "IPv6");
     }
 
-    log_msg(LOG_INFO, "DoH/HTTP DNS server listening on port %d", doh_port);
+    log_msg(LOG_INFO, "DoH/HTTP DNS server listening on port %d (%d stack%s)",
+            doh_port, nlsocks, nlsocks > 1 ? "s" : "");
 
     while (!stop) {
-        int *cfd = (int *)malloc(sizeof(int));
-        *cfd = accept(lfd, NULL, NULL);
-        if (*cfd < 0) {
-            free(cfd);
-            if (errno == EINTR) continue;
-            log_msg(LOG_ERROR, "DoH: accept failed: %s", strerror(errno));
-            break;
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        int maxfd = -1;
+        for (int i = 0; i < nlsocks; i++) {
+            FD_SET(lsocks[i], &rfds);
+            if (lsocks[i] > maxfd) maxfd = lsocks[i];
         }
-        pthread_t tid;
-        if (pthread_create(&tid, NULL, handle_client, cfd) != 0)
-            handle_client(cfd); /* 线程创建失败则同步处理 */
+        struct timeval tv = {1, 0};
+        int r = select(maxfd + 1, &rfds, NULL, NULL, &tv);
+        if (r <= 0) {
+#ifdef _WIN32
+            if (r < 0 && WSAGetLastError() != WSAEINTR) {
+                log_msg(LOG_DEBUG, "DoH: select -1 (WSA=%d)", WSAGetLastError());
+            }
+#else
+            if (r < 0 && errno != EINTR) {
+                log_msg(LOG_DEBUG, "DoH: select -1 (errno=%d)", errno);
+            }
+#endif
+            continue;
+        }
+        for (int i = 0; i < nlsocks; i++) {
+            if (!FD_ISSET(lsocks[i], &rfds)) continue;
+            int *cfd = (int *)malloc(sizeof(int));
+            if (!cfd) continue;
+            *cfd = accept(lsocks[i], NULL, NULL);
+            if (*cfd < 0) {
+                free(cfd);
+                if (errno == EINTR) continue;
+                log_msg(LOG_ERROR, "DoH: accept failed: %s", strerror(errno));
+                break;
+            }
+            pthread_t tid;
+            if (pthread_create(&tid, NULL, handle_client, cfd) != 0)
+                handle_client(cfd); /* 线程创建失败则同步处理 */
+        }
     }
 
-    close(lfd);
+    for (int i = 0; i < nlsocks; i++) close(lsocks[i]);
     return NULL;
 }

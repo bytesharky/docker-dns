@@ -11,8 +11,9 @@
 typedef struct {
     uint8_t data[BUF_SIZE];
     size_t len;
-    struct sockaddr_in client_addr;
+    struct sockaddr_storage client_addr;   // 兼容 IPv4/IPv6 的通用地址
     socklen_t client_len;
+    int sockfd;                            // 收到本请求的监听 socket，回包需走同一 socket
 } dns_request_t;
 
 extern dns_request_t queue[];
